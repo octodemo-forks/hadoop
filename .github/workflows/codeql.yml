@@ -13,7 +13,7 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ "trunk" ]
+    branches: [ "trunk", "master" ]
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ "trunk" ]
@@ -43,7 +43,21 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # Initializes the CodeQL tools for scanning.
+    - name: Set up JDK 8
+      uses: actions/setup-java@v3
+      with:
+        java-version: '8'
+        distribution: 'temurin'
+        
+    - name: Cache local Maven repository
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+
+# Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v2
       with:
@@ -68,9 +82,10 @@ jobs:
 
     #   If the Autobuild fails above, remove it and uncomment the following three lines.
     #   modify them (or add more) to build your code if your project, please refer to the EXAMPLE below for guidance.
-    - run: |
-        echo "Build Apache Hadoop using manual build command"
-        mvn clean install -DskipTests -Dmaven.javadoc.skip=true -f ./pom.xml
+    - name: Build Hadoop maven plugins
+      run: cd hadoop-maven-plugins && mvn --batch-mode install
+    - name: Build Hadoop
+      run: mvn clean install -DskipTests -DskipShade
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2
