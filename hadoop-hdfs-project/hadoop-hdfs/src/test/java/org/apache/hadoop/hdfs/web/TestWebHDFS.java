@@ -55,6 +55,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
@@ -87,6 +88,7 @@ import org.apache.hadoop.fs.permission.AclEntryScope;
 import org.apache.hadoop.fs.permission.AclEntryType;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.FsStatus;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DFSUtil;
@@ -520,6 +522,38 @@ public class TestWebHDFS {
     } catch (IOException ex) {
       GenericTestUtils.assertExceptionContains("Failed to find datanode", ex);
     }
+  }
+
+  @Test
+  public void testWebHdfsCreateWithInvalidPath() throws Exception {
+    final Configuration conf = WebHdfsTestUtil.createConf();
+    cluster = new MiniDFSCluster.Builder(conf).numDataNodes(0).build();
+    // A path name include duplicated slashes.
+    String path = "//tmp//file";
+    assertResponse(path);
+  }
+
+  private String getUri(String path) {
+    final String user = System.getProperty("user.name");
+    final StringBuilder uri = new StringBuilder(cluster.getHttpUri(0));
+    uri.append("/webhdfs/v1").
+        append(path).
+        append("?op=CREATE").
+        append("&user.name=" + user);
+    return uri.toString();
+  }
+
+  private void assertResponse(String path) throws IOException {
+    URL url = new URL(getUri(path));
+    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+    conn.setRequestMethod("PUT");
+    // Assert response code.
+    assertEquals(HttpURLConnection.HTTP_BAD_REQUEST, conn.getResponseCode());
+    // Assert exception.
+    Map<?, ?> response = WebHdfsFileSystem.jsonParse(conn, true);
+    assertEquals("InvalidPathException",
+        ((LinkedHashMap) response.get("RemoteException")).get("exception"));
+    conn.disconnect();
   }
 
   /**
@@ -2169,6 +2203,121 @@ public class TestWebHDFS {
       cluster.shutdown();
     }
   }
+
+  @Test
+  public void testLinkTarget() throws Exception {
+    final Configuration conf = WebHdfsTestUtil.createConf();
+    try {
+      cluster = new MiniDFSCluster.Builder(conf)
+          .numDataNodes(3)
+          .build();
+      cluster.waitActive();
+
+      final WebHdfsFileSystem webHdfs =
+          WebHdfsTestUtil.getWebHdfsFileSystem(conf,
+              WebHdfsConstants.WEBHDFS_SCHEME);
+
+      // Symbolic link
+      Path root = new Path("/webHdfsTest/");
+      Path targetFile = new Path(root, "debug.log");
+      FileSystemTestHelper.createFile(webHdfs, targetFile);
+
+      Path symLink = new Path(root, "debug.link");
+
+      webHdfs.createSymlink(targetFile, symLink, false);
+      assertEquals(webHdfs.getLinkTarget(symLink), targetFile);
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
+  @Test
+  public void testFileLinkStatus() throws Exception {
+    final Configuration conf = WebHdfsTestUtil.createConf();
+    try {
+      cluster = new MiniDFSCluster.Builder(conf).build();
+      cluster.waitActive();
+
+      final WebHdfsFileSystem webHdfs =
+          WebHdfsTestUtil.getWebHdfsFileSystem(conf,
+              WebHdfsConstants.WEBHDFS_SCHEME);
+      // Symbolic link
+      Path root = new Path("/webHdfsTest/");
+      Path file = new Path(root, "file");
+      FileSystemTestHelper.createFile(webHdfs, file);
+
+      Path linkToFile = new Path(root, "linkToFile");
+
+      webHdfs.createSymlink(file, linkToFile, false);
+      assertFalse(webHdfs.getFileLinkStatus(file).isSymlink());
+      assertTrue(webHdfs.getFileLinkStatus(linkToFile).isSymlink());
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
+  @Test
+  public void testFsStatus() throws Exception {
+    final Configuration conf = WebHdfsTestUtil.createConf();
+    try {
+      cluster = new MiniDFSCluster.Builder(conf).build();
+      cluster.waitActive();
+
+      final WebHdfsFileSystem webHdfs =
+          WebHdfsTestUtil.getWebHdfsFileSystem(conf,
+              WebHdfsConstants.WEBHDFS_SCHEME);
+
+      final DistributedFileSystem dfs = cluster.getFileSystem();
+
+      final String path = "/foo";
+      try (OutputStream os = webHdfs.create(new Path(path))) {
+        os.write(new byte[1024]);
+      }
+
+      FsStatus webHdfsFsStatus = webHdfs.getStatus(new Path("/"));
+      Assert.assertNotNull(webHdfsFsStatus);
+
+      FsStatus dfsFsStatus = dfs.getStatus(new Path("/"));
+      Assert.assertNotNull(dfsFsStatus);
+
+      //Validate used free and capacity are the same as DistributedFileSystem
+      Assert.assertEquals(webHdfsFsStatus.getUsed(), dfsFsStatus.getUsed());
+      Assert.assertEquals(webHdfsFsStatus.getRemaining(),
+          dfsFsStatus.getRemaining());
+      Assert.assertEquals(webHdfsFsStatus.getCapacity(),
+          dfsFsStatus.getCapacity());
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
+  @Test
+  public void testGetErasureCodingPolicies() throws Exception {
+    final Configuration conf = WebHdfsTestUtil.createConf();
+    cluster = new MiniDFSCluster.Builder(conf).build();
+    try {
+      cluster.waitActive();
+
+      final WebHdfsFileSystem webHdfs =
+          WebHdfsTestUtil.getWebHdfsFileSystem(conf,
+              WebHdfsConstants.WEBHDFS_SCHEME);
+
+      final DistributedFileSystem dfs = cluster.getFileSystem();
+
+      Collection<ErasureCodingPolicyInfo> webHdfsEcPolicyInfos =
+          webHdfs.getAllErasureCodingPolicies();
+
+      Collection<ErasureCodingPolicyInfo> dfsEcPolicyInfos =
+          dfs.getAllErasureCodingPolicies();
+
+      //Validate erasureCodingPolicyInfos are the same as DistributedFileSystem
+      assertEquals(dfsEcPolicyInfos.size(), webHdfsEcPolicyInfos.size());
+      assertTrue(dfsEcPolicyInfos.containsAll(webHdfsEcPolicyInfos));
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
   /**
    * Get FileStatus JSONObject from ListStatus response.
    */

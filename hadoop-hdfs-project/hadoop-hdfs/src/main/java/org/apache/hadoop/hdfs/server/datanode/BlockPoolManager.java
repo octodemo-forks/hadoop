@@ -196,8 +196,8 @@ class BlockPoolManager {
       
       // Step 2. Any nameservices we currently have but are no longer present
       // need to be removed.
-      toRemove = Sets.newHashSet(Sets.difference(
-          bpByNameserviceId.keySet(), addrMap.keySet()));
+      toRemove = Sets.difference(
+          bpByNameserviceId.keySet(), addrMap.keySet());
       
       assert toRefresh.size() + toAdd.size() ==
         addrMap.size() :
@@ -306,13 +306,6 @@ class BlockPoolManager {
   @VisibleForTesting
   Map<String, BPOfferService> getBpByNameserviceId() {
     return bpByNameserviceId;
-  }
-
-  boolean isSlownodeByNameserviceId(String nsId) {
-    if (bpByNameserviceId.containsKey(nsId)) {
-      return bpByNameserviceId.get(nsId).isSlownode();
-    }
-    return false;
   }
 
   boolean isSlownodeByBlockPoolId(String bpId) {

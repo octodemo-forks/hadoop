@@ -37,6 +37,7 @@ import org.apache.commons.collections.map.LinkedMap;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.ExtendedBlockId;
+import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.client.impl.DfsClientConf.ShortCircuitConf;
 import org.apache.hadoop.hdfs.net.DomainPeer;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
@@ -189,6 +190,7 @@ public class ShortCircuitCache implements Closeable {
       final DfsClientShm shm = (DfsClientShm)slot.getShm();
       final DomainSocket shmSock = shm.getPeer().getDomainSocket();
       final String path = shmSock.getPath();
+      DomainSocket domainSocket = pathToDomainSocket.get(path);
       DataOutputStream out = null;
       boolean success = false;
       int retries = 2;
@@ -196,9 +198,10 @@ public class ShortCircuitCache implements Closeable {
         while (retries > 0) {
           try {
             if (domainSocket == null || !domainSocket.isOpen()) {
-              // we are running in single thread mode, no protection needed for
-              // domainSocket
               domainSocket = DomainSocket.connect(path);
+              // we are running in single thread mode, no protection needed for
+              // pathToDomainSocket
+              pathToDomainSocket.put(path, domainSocket);
             }
 
             out = new DataOutputStream(
@@ -221,13 +224,16 @@ public class ShortCircuitCache implements Closeable {
           } catch (SocketException se) {
             // the domain socket on datanode may be timed out, we retry once
             retries--;
-            domainSocket.close();
-            domainSocket = null;
+            if (domainSocket != null) {
+              domainSocket.close();
+              domainSocket = null;
+              pathToDomainSocket.remove(path);
+            }
             if (retries == 0) {
               throw new SocketException("Create domain socket failed");
             }
           }
-        }
+        } // end of while block
       } catch (IOException e) {
         LOG.warn(ShortCircuitCache.this + ": failed to release "
             + "short-circuit shared memory slot " + slot + " by sending "
@@ -240,10 +246,10 @@ public class ShortCircuitCache implements Closeable {
         } else {
           shm.getEndpointShmManager().shutdown(shm);
           IOUtilsClient.cleanupWithLogger(LOG, domainSocket, out);
-          domainSocket = null;
+          pathToDomainSocket.remove(path);
         }
       }
-    }
+    } // end of run()
   }
 
   public interface ShortCircuitReplicaCreator {
@@ -354,7 +360,11 @@ public class ShortCircuitCache implements Closeable {
    */
   private final DfsClientShmManager shmManager;
 
-  private DomainSocket domainSocket = null;
+  /**
+   * A map contains all DomainSockets used in SlotReleaser. Keys are the domain socket
+   * paths of short-circuit shared memory segments.
+   */
+  private Map<String, DomainSocket> pathToDomainSocket = new HashMap<>();
 
   public static ShortCircuitCache fromConf(ShortCircuitConf conf) {
     return new ShortCircuitCache(
@@ -370,13 +380,17 @@ public class ShortCircuitCache implements Closeable {
   public ShortCircuitCache(int maxTotalSize, long maxNonMmappedEvictableLifespanMs,
       int maxEvictableMmapedSize, long maxEvictableMmapedLifespanMs,
       long mmapRetryTimeoutMs, long staleThresholdMs, int shmInterruptCheckMs) {
-    Preconditions.checkArgument(maxTotalSize >= 0);
+    Preconditions.checkArgument(maxTotalSize >= 0,
+        "maxTotalSize must be greater than zero.");
     this.maxTotalSize = maxTotalSize;
-    Preconditions.checkArgument(maxNonMmappedEvictableLifespanMs >= 0);
+    Preconditions.checkArgument(maxNonMmappedEvictableLifespanMs >= 0,
+        "maxNonMmappedEvictableLifespanMs must be greater than zero.");
     this.maxNonMmappedEvictableLifespanMs = maxNonMmappedEvictableLifespanMs;
-    Preconditions.checkArgument(maxEvictableMmapedSize >= 0);
+    Preconditions.checkArgument(maxEvictableMmapedSize >= 0,
+        HdfsClientConfigKeys.Mmap.CACHE_SIZE_KEY + " must be greater than zero.");
     this.maxEvictableMmapedSize = maxEvictableMmapedSize;
-    Preconditions.checkArgument(maxEvictableMmapedLifespanMs >= 0);
+    Preconditions.checkArgument(maxEvictableMmapedLifespanMs >= 0,
+        "maxEvictableMmapedLifespanMs must be greater than zero.");
     this.maxEvictableMmapedLifespanMs = maxEvictableMmapedLifespanMs;
     this.mmapRetryTimeoutMs = mmapRetryTimeoutMs;
     this.staleThresholdMs = staleThresholdMs;

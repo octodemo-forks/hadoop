@@ -131,6 +131,14 @@
 </property>
 
 <property>
+  <name>hadoop.security.resolver.impl</name>
+  <value>org.apache.hadoop.net.DNSDomainNameResolver</value>
+  <description>
+    The resolver implementation used to resolve FQDN for Kerberos
+  </description>
+</property>
+
+<property>
   <name>hadoop.security.dns.log-slow-lookups.enabled</name>
   <value>false</value>
   <description>
@@ -578,6 +586,18 @@
 </property>
 
 <property>
+  <name>hadoop.security.group.mapping.ldap.group.search.filter.pattern</name>
+  <value></value>
+  <description>
+    Comma separated values that needs to be substituted in the group search
+    filter during group lookup. The values are substituted in the order they
+    appear in the list, the first value will replace {0} the second {1} and
+    so on.
+  </description>
+</property>
+
+
+<property>
   <name>hadoop.security.group.mapping.providers</name>
   <value></value>
   <description>
@@ -793,7 +813,8 @@
   <description>The size of buffer for use in sequence files.
   The size of this buffer should probably be a multiple of hardware
   page size (4096 on Intel x86), and it determines how much data is
-  buffered during read and write operations.</description>
+  buffered during read and write operations. Must be greater than zero.
+  </description>
 </property>
 
 <property>
@@ -896,6 +917,16 @@
   <description>
     Comma separated raw coder implementations for the xor codec. The earlier
     factory is prior to followings in case of failure of creating raw coders.
+  </description>
+</property>
+
+<property>
+  <name>io.erasurecode.codec.native.enabled</name>
+  <value>true</value>
+  <description>
+    Used to decide whether to enable native codec. If set to false, native codec
+    would not be created and ISA-L support would be disabled. Recommend to set to
+    false when your CPU does not support ISA-L.
   </description>
 </property>
 
@@ -1074,14 +1105,6 @@
 </property>
 
 <property>
-  <name>fs.viewfs.overload.scheme.target.swift.impl</name>
-  <value>org.apache.hadoop.fs.swift.snative.SwiftNativeFileSystem</value>
-  <description>The SwiftNativeFileSystem for view file system overload scheme
-   when child file system and ViewFSOverloadScheme's schemes are swift.
-  </description>
-</property>
-
-<property>
   <name>fs.viewfs.overload.scheme.target.oss.impl</name>
   <value>org.apache.hadoop.fs.aliyun.oss.AliyunOSSFileSystem</value>
   <description>The AliyunOSSFileSystem for view file system overload scheme
@@ -1188,12 +1211,6 @@
   <name>fs.du.interval</name>
   <value>600000</value>
   <description>File space usage statistics refresh interval in msec.</description>
-</property>
-
-<property>
-  <name>fs.swift.impl</name>
-  <value>org.apache.hadoop.fs.swift.snative.SwiftNativeFileSystem</value>
-  <description>The implementation class of the OpenStack Swift Filesystem</description>
 </property>
 
 <property>
@@ -1617,9 +1634,12 @@
 
 <property>
   <name>fs.s3a.buffer.dir</name>
-  <value>${hadoop.tmp.dir}/s3a</value>
+  <value>${env.LOCAL_DIRS:-${hadoop.tmp.dir}}/s3a</value>
   <description>Comma separated list of directories that will be used to buffer file
-    uploads to.</description>
+    uploads to.
+    Yarn container path will be used as default value on yarn applications,
+    otherwise fall back to hadoop.tmp.dir
+  </description>
 </property>
 
 <property>
@@ -2025,6 +2045,17 @@
   </description>
 </property>
 
+<!--
+The switch to turn S3A auditing on or off.
+-->
+<property>
+  <name>fs.s3a.audit.enabled</name>
+  <value>true</value>
+  <description>
+    Should auditing of S3A requests be enabled?
+  </description>
+</property>
+
   <!-- Azure file system properties -->
 <property>
   <name>fs.AbstractFileSystem.wasb.impl</name>
@@ -2134,15 +2165,23 @@
 
   <property>
     <name>fs.azure.buffer.dir</name>
-    <value>${hadoop.tmp.dir}/abfs</value>
+    <value>${env.LOCAL_DIRS:-${hadoop.tmp.dir}}/abfs</value>
     <description>Directory path for buffer files needed to upload data blocks
-      in AbfsOutputStream.</description>
+      in AbfsOutputStream.
+      Yarn container path will be used as default value on yarn applications,
+      otherwise fall back to hadoop.tmp.dir </description>
   </property>
 
 <property>
   <name>fs.AbstractFileSystem.gs.impl</name>
   <value>com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS</value>
   <description>The AbstractFileSystem for gs: uris.</description>
+</property>
+
+<property>
+  <name>fs.azure.enable.readahead</name>
+  <value>true</value>
+  <description>Enabled readahead/prefetching in AbfsInputStream.</description>
 </property>
 
 <property>
@@ -2279,6 +2318,15 @@
   than 0, and ipc.client.ping is set to true, and this rpc-timeout is greater than
   the value of ipc.ping.interval, the effective value of the rpc-timeout is
   rounded up to multiple of ipc.ping.interval.
+  </description>
+</property>
+
+<property>
+  <name>ipc.server.handler.queue.size</name>
+  <value>100</value>
+  <description>
+    Indicates how many calls per handler are allowed in the queue. This value can
+    determine the maximum call queue size by multiplying the number of handler threads.
   </description>
 </property>
 
@@ -2915,7 +2963,7 @@
   <value></value>
   <description>
     List of fencing methods to use for service fencing. May contain
-    builtin methods (eg shell and sshfence) or user-defined method.
+    builtin methods (eg shell, sshfence and powershell) or user-defined method.
   </description>
 </property>
 
@@ -3887,6 +3935,35 @@
         the ZK CLI).
     </description>
   </property>
+
+  <property>
+    <name>hadoop.zk.ssl.keystore.location</name>
+    <description>
+      Keystore location for ZooKeeper client connection over SSL.
+    </description>
+  </property>
+
+  <property>
+    <name>hadoop.zk.ssl.keystore.password</name>
+    <description>
+      Keystore password for ZooKeeper client connection over SSL.
+    </description>
+  </property>
+
+  <property>
+    <name>hadoop.zk.ssl.truststore.location</name>
+    <decription>
+        Truststore location for ZooKeeper client connection over SSL.
+    </decription>
+  </property>
+
+  <property>
+    <name>hadoop.zk.ssl.truststore.password</name>
+    <description>
+      Truststore password for ZooKeeper client connection over SSL.
+    </description>
+  </property>
+
   <property>
     <name>hadoop.system.tags</name>
     <value>YARN,HDFS,NAMENODE,DATANODE,REQUIRED,SECURITY,KERBEROS,PERFORMANCE,CLIENT

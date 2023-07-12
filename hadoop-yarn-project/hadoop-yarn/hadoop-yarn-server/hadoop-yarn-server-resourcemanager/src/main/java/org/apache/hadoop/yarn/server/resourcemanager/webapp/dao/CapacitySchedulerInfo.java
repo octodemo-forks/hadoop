@@ -26,10 +26,10 @@ import javax.xml.bind.annotation.XmlType;
 
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractCSQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractLeafQueue;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractParentQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.ParentQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.helper.CapacitySchedulerInfoHelper;
 
 import java.util.ArrayList;
@@ -97,11 +97,11 @@ public class CapacitySchedulerInfo extends SchedulerInfo {
 
     CapacitySchedulerConfiguration conf = cs.getConfiguration();
     queueAcls = new QueueAclsInfo();
-    queueAcls.addAll(getSortedQueueAclInfoList(queueName, conf));
+    queueAcls.addAll(getSortedQueueAclInfoList(parent, queueName, conf));
 
     queuePriority = parent.getPriority().getPriority();
-    if (parent instanceof ParentQueue) {
-      ParentQueue queue = (ParentQueue) parent;
+    if (parent instanceof AbstractParentQueue) {
+      AbstractParentQueue queue = (AbstractParentQueue) parent;
       orderingPolicyInfo = queue.getQueueOrderingPolicy()
           .getConfigName();
       autoQueueTemplateProperties = CapacitySchedulerInfoHelper
@@ -121,6 +121,7 @@ public class CapacitySchedulerInfo extends SchedulerInfo {
         .getAutoCreationEligibility(parent);
 
     defaultNodeLabelExpression = parent.getDefaultNodeLabelExpression();
+    schedulerName = "Capacity Scheduler";
   }
 
   public float getCapacity() {

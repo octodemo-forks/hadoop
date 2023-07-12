@@ -327,7 +327,7 @@ public class TestClientProtocolForPipelineRecovery {
       // Wait long enough to receive an OOB ack before closing the file.
       GenericTestUtils.waitForThreadTermination(
           "Async datanode shutdown thread", 100, 10000);
-      // Retart the datanode 
+      // Restart the datanode
       cluster.restartDataNode(0, true);
       // The following forces a data packet and end of block packets to be sent. 
       out.close();
@@ -448,7 +448,7 @@ public class TestClientProtocolForPipelineRecovery {
    *  rolling upgrades. The client should be able to retry pipeline recovery
    *  more times than the default.
    *  (in a row for the same packet, including the heartbeat packet)
-   *  (See{@link DataStreamer#pipelineRecoveryCount})
+   *  (See{@link DataStreamer#getPipelineRecoveryCount})
    */
   @Test(timeout = 60000)
   public void testPipelineRecoveryOnDatanodeUpgrade() throws Exception {

@@ -20,7 +20,7 @@ package org.apache.hadoop.yarn.server.federation.policies;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Collection;
 import java.util.Random;
 
 import org.apache.hadoop.classification.InterfaceAudience.Private;
@@ -188,8 +188,8 @@ public final class FederationPolicyUtils {
    * @throws FederationPolicyException if there are no usable subclusters.
    */
   public static void validateSubClusterAvailability(
-      List<SubClusterId> activeSubClusters,
-      List<SubClusterId> blackListSubClusters)
+      Collection<SubClusterId> activeSubClusters,
+      Collection<SubClusterId> blackListSubClusters)
       throws FederationPolicyException {
     if (activeSubClusters != null && !activeSubClusters.isEmpty()) {
       if (blackListSubClusters == null) {
@@ -237,7 +237,7 @@ public final class FederationPolicyUtils {
         }
       }
     }
-    // This can only happen if samplePoint is very close to totoalWeight and
+    // This can only happen if samplePoint is very close to totalWeight and
     // float rounding kicks in during subtractions
     return lastIndex;
   }

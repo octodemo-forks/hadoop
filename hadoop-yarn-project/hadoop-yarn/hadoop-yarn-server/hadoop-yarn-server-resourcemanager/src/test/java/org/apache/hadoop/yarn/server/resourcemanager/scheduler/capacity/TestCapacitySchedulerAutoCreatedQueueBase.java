@@ -89,6 +89,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.apache.hadoop.yarn.nodelabels.CommonNodeLabelsManager
     .NO_LABEL;
+import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractCSQueue.CapacityConfigType.ABSOLUTE_RESOURCE;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler
     .capacity.CSQueueUtils.EPSILON;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler
@@ -166,6 +167,7 @@ public class TestCapacitySchedulerAutoCreatedQueueBase {
 
   public static final float NODE_LABEL_GPU_TEMPLATE_CAPACITY = 30.0f;
   public static final float NODEL_LABEL_SSD_TEMPLATE_CAPACITY = 40.0f;
+  public static final ImmutableSet<String> RESOURCE_TYPES = ImmutableSet.of("memory", "vcores");
 
   protected MockRM mockRM = null;
   protected MockNM nm1 = null;
@@ -249,8 +251,8 @@ public class TestCapacitySchedulerAutoCreatedQueueBase {
     nm1.registerNode();
 
     NodeLabel gpuLabel = Records.newRecord(NodeLabel.class);
-    ssdLabel.setName(NODEL_LABEL_GPU);
-    ssdLabel.setExclusivity(true);
+    gpuLabel.setName(NODEL_LABEL_GPU);
+    gpuLabel.setExclusivity(true);
 
     //Label = GPU
     nm2 = new MockNM("h2:1234",
@@ -483,6 +485,20 @@ public class TestCapacitySchedulerAutoCreatedQueueBase {
     conf.setAutoCreatedLeafQueueConfigUserLimitFactor(C, 3.0f);
 
     return conf;
+  }
+
+  public static void setupQueueConfigurationForSingleFlexibleAutoCreatedLeafQueue(
+          CapacitySchedulerConfiguration conf) {
+
+    //setup new queues with one of them auto enabled
+    // Define top-level queues
+    // Set childQueue for root
+    conf.setQueues(CapacitySchedulerConfiguration.ROOT,
+            new String[] {"c"});
+    conf.setCapacity(C, 100f);
+
+    conf.setUserLimitFactor(C, 1.0f);
+    conf.setAutoQueueCreationV2Enabled(C, true);
   }
 
   @After
@@ -777,17 +793,21 @@ public class TestCapacitySchedulerAutoCreatedQueueBase {
             * parentQueue.getQueueCapacities().getAbsoluteCapacity(label));
     assertEquals(effMinCapacity, Resources.multiply(resourceByLabel,
         leafQueue.getQueueCapacities().getAbsoluteCapacity(label)));
-    // TODO: Wangda, I think this is a wrong test, it doesn't consider rounding
-    // loss of multiplication, the right value should be <10240, 2>, but the
-    // test expects <10240, 1>
-    // fixme, address this in the future patch (auto queue creation).
-//    if (expectedQueueEntitlements.get(label).getCapacity() > EPSILON) {
-//      assertEquals(Resource.newInstance(10 * GB, 2),
-//          leafQueue.getEffectiveCapacity(label));
-//    } else {
-//      assertEquals(Resource.newInstance(0, 0),
-//          leafQueue.getEffectiveCapacity(label));
-//    }
+
+    if (expectedQueueEntitlements.get(label).getCapacity() > EPSILON) {
+      if (leafQueue.getCapacityConfigType().equals(ABSOLUTE_RESOURCE)) {
+        String templatePrefix = cs.getConfiguration().getAutoCreatedQueueTemplateConfPrefix(
+            parentQueue.getQueuePath());
+        Resource resourceTemplate = parentQueue.getLeafQueueTemplate().getLeafQueueConfigs()
+            .getMinimumResourceRequirement(label, templatePrefix, RESOURCE_TYPES);
+        assertEquals(resourceTemplate, leafQueue.getEffectiveCapacity(label));
+      } else {
+        assertEquals(effMinCapacity, leafQueue.getEffectiveCapacity(label));
+      }
+    } else {
+      assertEquals(Resource.newInstance(0, 0),
+          leafQueue.getEffectiveCapacity(label));
+    }
 
     if (leafQueue.getQueueCapacities().getAbsoluteCapacity(label) > 0) {
       assertTrue(Resources.greaterThan(cs.getResourceCalculator(),

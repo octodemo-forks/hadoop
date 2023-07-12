@@ -60,7 +60,7 @@
           <dependency>
             <groupId>org.codehaus.mojo</groupId>
             <artifactId>extra-enforcer-rules</artifactId>
-            <version>1.0-beta-3</version>
+            <version>1.5.1</version>
           </dependency>
         </dependencies>
         <executions>
@@ -190,7 +190,6 @@
             <configuration>
               <executable>${shell-executable}</executable>
               <workingDirectory>${project.build.testOutputDirectory}</workingDirectory>
-              <requiresOnline>false</requiresOnline>
               <arguments>
                 <argument>ensure-jars-have-correct-contents.sh</argument>
                 <argument>${hadoop-client-artifacts}</argument>

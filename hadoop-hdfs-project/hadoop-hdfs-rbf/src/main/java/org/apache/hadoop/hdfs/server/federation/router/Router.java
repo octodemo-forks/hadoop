@@ -196,6 +196,8 @@ public class Router extends CompositeService implements
       this.setRpcServerAddress(rpcServer.getRpcAddress());
     }
 
+    checkRouterId();
+
     if (conf.getBoolean(
         RBFConfigKeys.DFS_ROUTER_ADMIN_ENABLE,
         RBFConfigKeys.DFS_ROUTER_ADMIN_ENABLE_DEFAULT)) {
@@ -305,6 +307,21 @@ public class Router extends CompositeService implements
       MountTableStore mountstore =
           this.stateStore.getRegisteredRecordStore(MountTableStore.class);
       mountstore.setQuotaManager(this.quotaManager);
+    }
+  }
+
+  /**
+   * Set the router id if not set to prevent RouterHeartbeatService
+   * update state store with a null router id.
+   */
+  private void checkRouterId() {
+    if (this.routerId == null) {
+      InetSocketAddress confRpcAddress = conf.getSocketAddr(
+          RBFConfigKeys.DFS_ROUTER_RPC_BIND_HOST_KEY,
+          RBFConfigKeys.DFS_ROUTER_RPC_ADDRESS_KEY,
+          RBFConfigKeys.DFS_ROUTER_RPC_ADDRESS_DEFAULT,
+          RBFConfigKeys.DFS_ROUTER_RPC_PORT_DEFAULT);
+      setRpcServerAddress(confRpcAddress);
     }
   }
 
@@ -653,6 +670,9 @@ public class Router extends CompositeService implements
 
   /**
    * Compare router state.
+   *
+   * @param routerState the router service state.
+   * @return true if the given router state is same as the state maintained by the router object.
    */
   public boolean isRouterState(RouterServiceState routerState) {
     return routerState.equals(this.state);
@@ -708,9 +728,10 @@ public class Router extends CompositeService implements
   }
 
   /**
-   * Get the Namenode metrics.
+   * Get the namenode metrics.
    *
-   * @return Namenode metrics.
+   * @return the namenode metrics.
+   * @throws IOException if the namenode metrics are not initialized.
    */
   public NamenodeBeanMetrics getNamenodeMetrics() throws IOException {
     if (this.metrics == null) {
@@ -740,7 +761,7 @@ public class Router extends CompositeService implements
   /**
    * Get the state store interface for the router heartbeats.
    *
-   * @return FederationRouterStateStore state store API handle.
+   * @return RouterStore state store API handle.
    */
   public RouterStore getRouterStateManager() {
     if (this.routerStateManager == null && this.stateStore != null) {
@@ -847,7 +868,8 @@ public class Router extends CompositeService implements
 
   /**
    * Set router configuration.
-   * @param conf
+   *
+   * @param conf the configuration.
    */
   @VisibleForTesting
   public void setConf(Configuration conf) {

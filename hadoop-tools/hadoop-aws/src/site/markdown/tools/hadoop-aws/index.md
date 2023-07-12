@@ -23,11 +23,10 @@
 
 ###  <a name="directory-marker-compatibility"></a> Directory Marker Compatibility
 
-1. This release can safely list/index/read S3 buckets where "empty directory"
-markers are retained.
-
-1. This release can be configured to retain these directory makers at the
-expense of being backwards incompatible.
+This release does not delete directory markers when creating
+files or directories underneath.
+This is incompatible with versions of the Hadoop S3A client released
+before 2021.
 
 Consult [Controlling the S3A Directory Marker Behavior](directory_markers.html) for
 full details.
@@ -47,6 +46,8 @@ full details.
 * [Auditing](./auditing.html).
 * [Auditing Architecture](./auditing_architecture.html).
 * [Testing](./testing.html)
+* [Prefetching](./prefetching.html)
+* [Upcoming upgrade to AWS Java SDK V2](./aws_sdk_upgrade.html)
 
 ## <a name="overview"></a> Overview
 
@@ -234,6 +235,9 @@ needs the credentials needed to interact with buckets.
 The client supports multiple authentication mechanisms and can be configured as to
 which mechanisms to use, and their order of use. Custom implementations
 of `com.amazonaws.auth.AWSCredentialsProvider` may also be used.
+However, with the upcoming upgrade to AWS Java SDK V2, these classes will need to be
+updated to implement `software.amazon.awssdk.auth.credentials.AwsCredentialsProvider`.
+For more information see [Upcoming upgrade to AWS Java SDK V2](./aws_sdk_upgrade.html).
 
 *Important*: The S3A connector no longer supports username and secrets
 in URLs of the form `s3a://key:secret@bucket/`.
@@ -500,7 +504,7 @@ providers listed after it will be ignored.
 
 ### <a name="auth_simple"></a> Simple name/secret credentials with `SimpleAWSCredentialsProvider`*
 
-This is is the standard credential provider, which supports the secret
+This is the standard credential provider, which supports the secret
 key in `fs.s3a.access.key` and token in `fs.s3a.secret.key`
 values.
 
@@ -967,9 +971,12 @@ options are covered in [Testing](./testing.md).
 
 <property>
   <name>fs.s3a.buffer.dir</name>
-  <value>${hadoop.tmp.dir}/s3a</value>
+  <value>${env.LOCAL_DIRS:-${hadoop.tmp.dir}}/s3a</value>
   <description>Comma separated list of directories that will be used to buffer file
-    uploads to.</description>
+    uploads to.
+    Yarn container path will be used as default value on yarn applications,
+    otherwise fall back to hadoop.tmp.dir
+  </description>
 </property>
 
 <property>
@@ -1008,6 +1015,14 @@ options are covered in [Testing](./testing.md).
 
 <property>
   <name>fs.s3a.readahead.range</name>
+  <value>64K</value>
+  <description>Bytes to read ahead during a seek() before closing and
+  re-opening the S3 HTTP connection. This option will be overridden if
+  any call to setReadahead() is made to an open stream.</description>
+</property>
+
+<property>
+  <name>fs.s3a.input.async.drain.threshold</name>
   <value>64K</value>
   <description>Bytes to read ahead during a seek() before closing and
   re-opening the S3 HTTP connection. This option will be overridden if
@@ -1068,6 +1083,41 @@ options are covered in [Testing](./testing.md).
   </description>
 </property>
 
+<property>
+  <name>fs.s3a.create.storage.class</name>
+  <value></value>
+  <description>
+      Storage class: standard, reduced_redundancy, intelligent_tiering, etc.
+      Specify the storage class for S3A PUT object requests.
+      If not set the storage class will be null
+      and mapped to default standard class on S3.
+  </description>
+</property>
+
+<property>
+  <name>fs.s3a.prefetch.enabled</name>
+  <value>false</value>
+  <description>
+    Enables prefetching and caching when reading from input stream.
+  </description>
+</property>
+
+<property>
+  <name>fs.s3a.prefetch.block.size</name>
+  <value>8MB</value>
+  <description>
+      The size of a single prefetched block of data.
+      Decreasing this will increase the number of prefetches required, and may negatively impact performance.
+  </description>
+</property>
+
+<property>
+  <name>fs.s3a.prefetch.block.count</name>
+  <value>8</value>
+  <description>
+      Maximum number of blocks prefetched concurrently at any given time.
+  </description>
+</property>
 ```
 
 ## <a name="retry_and_recovery"></a>Retry and Recovery
@@ -1342,7 +1392,7 @@ an S3 implementation that doesn't return eTags.
 
 When `true` (default) and 'Get Object' doesn't return eTag or
 version ID (depending on configured 'source'), a `NoVersionAttributeException`
-will be thrown.  When `false` and and eTag or version ID is not returned,
+will be thrown.  When `false` and eTag or version ID is not returned,
 the stream can be read, but without any version checking.
 
 
@@ -1584,7 +1634,7 @@ Accessing data through an access point, is done by using its ARN, as opposed to 
 You can set the Access Point ARN property using the following per bucket configuration property:
 ```xml
 <property>
-    <name>fs.s3a.sample-bucket.accesspoint.arn</name>
+    <name>fs.s3a.bucket.sample-bucket.accesspoint.arn</name>
     <value> {ACCESSPOINT_ARN_HERE} </value>
     <description>Configure S3a traffic to use this AccessPoint</description>
 </property>
@@ -1594,21 +1644,11 @@ This configures access to the `sample-bucket` bucket for S3A, to go through the
 new Access Point ARN. So, for example `s3a://sample-bucket/key` will now use your
 configured ARN when getting data from S3 instead of your bucket.
 
-You can also use an Access Point name as a path URI such as `s3a://finance-team-access/key`, by
-configuring the `.accesspoint.arn` property as a per-bucket override:
-```xml
-<property>
-    <name>fs.s3a.finance-team-access.accesspoint.arn</name>
-    <value> {ACCESSPOINT_ARN_HERE} </value>
-    <description>Configure S3a traffic to use this AccessPoint</description>
-</property>
-```
-
 The `fs.s3a.accesspoint.required` property can also require all access to S3 to go through Access
 Points. This has the advantage of increasing security inside a VPN / VPC as you only allow access
 to known sources of data defined through Access Points. In case there is a need to access a bucket
 directly (without Access Points) then you can use per bucket overrides to disable this setting on a
-bucket by bucket basis i.e. `fs.s3a.{YOUR-BUCKET}.accesspoint.required`.
+bucket by bucket basis i.e. `fs.s3a.bucket.{YOUR-BUCKET}.accesspoint.required`.
 
 ```xml
 <!-- Require access point only access -->
@@ -1618,7 +1658,7 @@ bucket by bucket basis i.e. `fs.s3a.{YOUR-BUCKET}.accesspoint.required`.
 </property>
 <!-- Disable it on a per-bucket basis if needed -->
 <property>
-    <name>fs.s3a.example-bucket.accesspoint.required</name>
+    <name>fs.s3a.bucket.example-bucket.accesspoint.required</name>
     <value>false</value>
 </property>
 ```
@@ -1629,6 +1669,45 @@ Before using Access Points make sure you're not impacted by the following:
 `s3-accesspoint.REGION.amazonaws.{com | com.cn}` depending on the Access Point ARN. While
 considering endpoints, if you have any custom signers that use the host endpoint property make
 sure to update them if needed;
+
+## <a name="requester_pays"></a>Requester Pays buckets
+
+S3A supports buckets with
+[Requester Pays](https://docs.aws.amazon.com/AmazonS3/latest/userguide/RequesterPaysBuckets.html)
+enabled. When a bucket is configured with requester pays, the requester must cover
+the per-request cost.
+
+For requests to be successful, the S3 client must acknowledge that they will pay
+for these requests by setting a request flag, usually a header, on each request.
+
+To enable this feature within S3A, configure the `fs.s3a.requester.pays.enabled` property.
+
+```xml
+<property>
+    <name>fs.s3a.requester.pays.enabled</name>
+    <value>true</value>
+</property>
+```
+
+## <a name="storage_classes"></a>Storage Classes
+
+Amazon S3 offers a range of [Storage Classes](https://aws.amazon.com/s3/storage-classes/)
+that you can choose from based on behavior of your applications. By using the right
+storage class, you can reduce the cost of your bucket.
+
+S3A uses Standard storage class for PUT object requests by default, which is suitable for
+general use cases. To use a specific storage class, set the value in `fs.s3a.create.storage.class` property to
+the storage class you want.
+
+```xml
+<property>
+    <name>fs.s3a.create.storage.class</name>
+    <value>intelligent_tiering</value>
+</property>
+```
+
+Please note that S3A does not support reading from archive storage classes at the moment.
+`AccessDeniedException` with InvalidObjectState will be thrown if you're trying to do so.
 
 ## <a name="upload"></a>How S3A writes data to S3
 
@@ -1647,7 +1726,9 @@ The "fast" output stream
 
 1.  Uploads large files as blocks with the size set by
     `fs.s3a.multipart.size`. That is: the threshold at which multipart uploads
-    begin and the size of each upload are identical.
+    begin and the size of each upload are identical. This behavior can be enabled
+    or disabled by using the flag `fs.s3a.multipart.uploads.enabled` which by
+    default is set to true.
 1.  Buffers blocks to disk (default) or in on-heap or off-heap memory.
 1.  Uploads blocks in parallel in background threads.
 1.  Begins uploading blocks as soon as the buffered data exceeds this partition
@@ -1746,9 +1827,12 @@ consumed, and so eliminates heap size as the limiting factor in queued uploads
 
 <property>
   <name>fs.s3a.buffer.dir</name>
-  <value>${hadoop.tmp.dir}/s3a</value>
+  <value>${env.LOCAL_DIRS:-${hadoop.tmp.dir}}/s3a</value>
   <description>Comma separated list of directories that will be used to buffer file
-    uploads to.</description>
+    uploads to.
+    Yarn container path will be used as default value on yarn applications,
+    otherwise fall back to hadoop.tmp.dir
+  </description>
 </property>
 ```
 
@@ -1786,7 +1870,7 @@ in byte arrays in the JVM's heap prior to upload.
 This *may* be faster than buffering to disk.
 
 The amount of data which can be buffered is limited by the available
-size of the JVM heap heap. The slower the write bandwidth to S3, the greater
+size of the JVM heap. The slower the write bandwidth to S3, the greater
 the risk of heap overflows. This risk can be mitigated by
 [tuning the upload settings](#upload_thread_tuning).
 

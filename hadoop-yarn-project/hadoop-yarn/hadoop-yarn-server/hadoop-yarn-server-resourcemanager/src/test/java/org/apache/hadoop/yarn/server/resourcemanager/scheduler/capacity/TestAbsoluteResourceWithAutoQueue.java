@@ -45,6 +45,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.queuemanagement.GuaranteedOrZeroCapacityOverTimePolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy.FifoOrderingPolicy;
 import org.apache.hadoop.yarn.util.resource.DominantResourceCalculator;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -91,6 +92,13 @@ public class TestAbsoluteResourceWithAutoQueue
   public void setUp() throws Exception {
 
     accessibleNodeLabelsOnC.add(NO_LABEL);
+  }
+
+  @After
+  public void tearDown() {
+    if (mockRM != null) {
+      mockRM.stop();
+    }
   }
 
   private CapacitySchedulerConfiguration setupMinMaxResourceConfiguration(
@@ -148,8 +156,6 @@ public class TestAbsoluteResourceWithAutoQueue
     return csConf;
   }
 
-  // TODO: Wangda: I think this test case is not correct, Sunil could help look
-  // into details.
   @Test(timeout = 20000)
   public void testAutoCreateLeafQueueCreation() throws Exception {
 
@@ -182,10 +188,8 @@ public class TestAbsoluteResourceWithAutoQueue
       ManagedParentQueue parentQueue = (ManagedParentQueue) cs.getQueue(QUEUED);
       assertEquals(parentQueue, autoCreatedLeafQueue.getParent());
 
-      validateCapacities((AutoCreatedLeafQueue) autoCreatedLeafQueue, 0.4f,
-          0.04f, 1f, 0.6f);
-      validateCapacitiesByLabel((ManagedParentQueue) parentQueue,
-          (AutoCreatedLeafQueue) autoCreatedLeafQueue, NO_LABEL);
+      validateCapacities(autoCreatedLeafQueue, 0.4f, 0.04f, 1f, 0.6f);
+      validateCapacitiesByLabel(parentQueue, autoCreatedLeafQueue, NO_LABEL);
 
       Map<String, Float> expectedChildQueueAbsCapacity =
           new HashMap<String, Float>() {

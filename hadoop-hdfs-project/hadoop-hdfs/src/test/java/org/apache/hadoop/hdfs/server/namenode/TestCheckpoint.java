@@ -1140,6 +1140,7 @@ public class TestCheckpoint {
    * Tests save namespace.
    */
   @Test
+  @SuppressWarnings("deprecation")
   public void testSaveNamespace() throws IOException {
     MiniDFSCluster cluster = null;
     DistributedFileSystem fs = null;
@@ -2613,7 +2614,7 @@ public class TestCheckpoint {
   }
 
   private static CheckpointStorage spyOnSecondaryImage(SecondaryNameNode secondary1) {
-    CheckpointStorage spy = Mockito.spy((CheckpointStorage)secondary1.getFSImage());;
+    CheckpointStorage spy = Mockito.spy((CheckpointStorage)secondary1.getFSImage());
     secondary1.setFSImage(spy);
     return spy;
   }

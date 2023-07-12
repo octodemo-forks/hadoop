@@ -156,7 +156,7 @@ public class TestRouterClientMetrics {
 
   @Test
   public void testRenewLease() throws Exception {
-    router.getRpcServer().renewLease("test");
+    router.getRpcServer().renewLease("test", null);
     assertCounter("RenewLeaseOps", 2L, getMetrics(ROUTER_METRICS));
     assertCounter("ConcurrentRenewLeaseOps", 1L, getMetrics(ROUTER_METRICS));
   }
@@ -168,6 +168,13 @@ public class TestRouterClientMetrics {
     assertCounter("GetDatanodeReportOps", 2L, getMetrics(ROUTER_METRICS));
     assertCounter("ConcurrentGetDatanodeReportOps", 1L,
         getMetrics(ROUTER_METRICS));
+  }
+
+  @Test
+  public void testGetSlowDatanodeReport() throws Exception {
+    router.getRpcServer().getSlowDatanodeReport();
+    assertCounter("GetSlowDatanodeReportOps", 2L, getMetrics(ROUTER_METRICS));
+    assertCounter("ConcurrentGetSlowDatanodeReportOps", 1L, getMetrics(ROUTER_METRICS));
   }
 
 }

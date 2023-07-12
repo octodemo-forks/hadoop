@@ -232,7 +232,7 @@ public class DFSStripedInputStream extends DFSInputStream {
 
   boolean createBlockReader(LocatedBlock block, long offsetInBlock,
       LocatedBlock[] targetBlocks, BlockReaderInfo[] readerInfos,
-      int chunkIndex) throws IOException {
+      int chunkIndex, long readTo) throws IOException {
     BlockReader reader = null;
     final ReaderRetryPolicy retry = new ReaderRetryPolicy();
     DFSInputStream.DNAddrPair dnInfo =
@@ -250,9 +250,14 @@ public class DFSStripedInputStream extends DFSInputStream {
         if (dnInfo == null) {
           break;
         }
+        if (readTo < 0 || readTo > block.getBlockSize()) {
+          readTo = block.getBlockSize();
+        }
         reader = getBlockReader(block, offsetInBlock,
-            block.getBlockSize() - offsetInBlock,
+            readTo - offsetInBlock,
             dnInfo.addr, dnInfo.storageType, dnInfo.info);
+        DFSClientFaultInjector.get().onCreateBlockReader(block, chunkIndex, offsetInBlock,
+            readTo - offsetInBlock);
       } catch (IOException e) {
         if (e instanceof InvalidEncryptionKeyException &&
             retry.shouldRefetchEncryptionKey()) {
@@ -326,15 +331,17 @@ public class DFSStripedInputStream extends DFSInputStream {
    * its ThreadLocal.
    *
    * @param stats striped read stats
+   * @param readTimeMS read time metrics in ms
+   *
    */
-  void updateReadStats(final StripedBlockUtil.BlockReadStats stats) {
+  void updateReadStats(final StripedBlockUtil.BlockReadStats stats, long readTimeMS) {
     if (stats == null) {
       return;
     }
     updateReadStatistics(readStatistics, stats.getBytesRead(),
         stats.isShortCircuit(), stats.getNetworkDistance());
     dfsClient.updateFileSystemReadStats(stats.getNetworkDistance(),
-        stats.getBytesRead());
+        stats.getBytesRead(), readTimeMS);
     assert readStatistics.getBlockType() == BlockType.STRIPED;
     dfsClient.updateFileSystemECReadStats(stats.getBytesRead());
   }
@@ -485,11 +492,16 @@ public class DFSStripedInputStream extends DFSInputStream {
     final LocatedBlock[] blks = StripedBlockUtil.parseStripedBlockGroup(
         blockGroup, cellSize, dataBlkNum, parityBlkNum);
     final BlockReaderInfo[] preaderInfos = new BlockReaderInfo[groupSize];
+    long readTo = -1;
+    for (AlignedStripe stripe : stripes) {
+      readTo = Math.max(readTo, stripe.getOffsetInBlock() + stripe.getSpanInBlock());
+    }
     try {
       for (AlignedStripe stripe : stripes) {
         // Parse group to get chosen DN location
         StripeReader preader = new PositionStripeReader(stripe, ecPolicy, blks,
             preaderInfos, corruptedBlocks, decoder, this);
+        preader.setReadTo(readTo);
         try {
           preader.readStripe();
         } finally {
@@ -554,4 +566,5 @@ public class DFSStripedInputStream extends DFSInputStream {
       parityBuf = null;
     }
   }
+
 }

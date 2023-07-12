@@ -55,6 +55,7 @@ import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.core.Response.Status;
 
+import org.apache.hadoop.fs.InvalidPathException;
 import org.apache.hadoop.fs.QuotaUsage;
 import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
@@ -72,9 +73,11 @@ import org.apache.hadoop.fs.permission.AclStatus;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsCreateModes;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.FsStatus;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.DFSUtilClient;
+import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
@@ -82,6 +85,7 @@ import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.DirectoryListing;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
+import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicyInfo;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
@@ -401,6 +405,9 @@ public class NamenodeWebHdfsMethods {
       final String path, final HttpOpParam.Op op, final long openOffset,
       final long blocksize, final String excludeDatanodes,
       final Param<?, ?>... parameters) throws URISyntaxException, IOException {
+    if (!DFSUtil.isValidName(path)) {
+      throw new InvalidPathException(path);
+    }
     final DatanodeInfo dn;
     final NamenodeProtocols np = getRPCServer(namenode);
     HdfsFileStatus status = null;
@@ -1379,6 +1386,33 @@ public class NamenodeWebHdfsMethods {
       final String js = JsonUtil.toJsonString(snapshotList);
       return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
     }
+    case GETLINKTARGET: {
+      String target = cp.getLinkTarget(fullpath);
+      final String js = JsonUtil.toJsonString("Path", target);
+      return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
+    }
+    case GETFILELINKSTATUS: {
+      HdfsFileStatus status = cp.getFileLinkInfo(fullpath);
+      if (status == null) {
+        throw new FileNotFoundException("File does not exist: " + fullpath);
+      }
+      final String js = JsonUtil.toJsonString(status, true);
+      return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
+    }
+    case GETSTATUS: {
+      long[] states = cp.getStats();
+      FsStatus status = new FsStatus(
+          DFSClient.getStateAtIndex(states, 0),
+          DFSClient.getStateAtIndex(states, 1),
+          DFSClient.getStateAtIndex(states, 2));
+      final String js = JsonUtil.toJsonString(status);
+      return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
+    }
+    case GETECPOLICIES: {
+      ErasureCodingPolicyInfo[] ecPolicyInfos = cp.getErasureCodingPolicies();
+      final String js = JsonUtil.toJsonString(ecPolicyInfos);
+      return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
+    }
     default:
       throw new UnsupportedOperationException(op + " is not supported");
     }
@@ -1517,6 +1551,7 @@ public class NamenodeWebHdfsMethods {
       }
     };
   }
+
 
   /** Handle HTTP DELETE request for the root. */
   @DELETE

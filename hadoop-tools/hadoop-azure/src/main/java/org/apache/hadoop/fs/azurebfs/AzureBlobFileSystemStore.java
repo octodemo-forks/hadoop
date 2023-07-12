@@ -55,6 +55,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.classification.VisibleForTesting;
+import org.apache.hadoop.fs.impl.BackReference;
 import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.thirdparty.com.google.common.base.Strings;
 import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.Futures;
@@ -96,6 +97,7 @@ import org.apache.hadoop.fs.azurebfs.services.AbfsAclHelper;
 import org.apache.hadoop.fs.azurebfs.services.AbfsClient;
 import org.apache.hadoop.fs.azurebfs.services.AbfsClientContext;
 import org.apache.hadoop.fs.azurebfs.services.AbfsClientContextBuilder;
+import org.apache.hadoop.fs.azurebfs.services.AbfsClientRenameResult;
 import org.apache.hadoop.fs.azurebfs.services.AbfsCounters;
 import org.apache.hadoop.fs.azurebfs.services.AbfsHttpOperation;
 import org.apache.hadoop.fs.azurebfs.services.AbfsInputStream;
@@ -131,6 +133,8 @@ import org.apache.hadoop.util.SemaphoredDelegatingExecutor;
 import org.apache.hadoop.util.concurrent.HadoopExecutors;
 import org.apache.http.client.utils.URIBuilder;
 
+import static org.apache.hadoop.fs.azurebfs.AbfsStatistic.METADATA_INCOMPLETE_RENAME_FAILURES;
+import static org.apache.hadoop.fs.azurebfs.AbfsStatistic.RENAME_RECOVERY;
 import static org.apache.hadoop.fs.azurebfs.constants.AbfsHttpConstants.CHAR_EQUALS;
 import static org.apache.hadoop.fs.azurebfs.constants.AbfsHttpConstants.CHAR_FORWARD_SLASH;
 import static org.apache.hadoop.fs.azurebfs.constants.AbfsHttpConstants.CHAR_HYPHEN;
@@ -186,6 +190,9 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
   /** Bounded ThreadPool for this instance. */
   private ExecutorService boundedThreadPool;
 
+  /** ABFS instance reference to be held by the store to avoid GC close. */
+  private BackReference fsBackRef;
+
   /**
    * FileSystem Store for {@link AzureBlobFileSystem} for Abfs operations.
    * Built using the {@link AzureBlobFileSystemStoreBuilder} with parameters
@@ -199,6 +206,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
     String[] authorityParts = authorityParts(uri);
     final String fileSystemName = authorityParts[0];
     final String accountName = authorityParts[1];
+    this.fsBackRef = abfsStoreBuilder.fsBackRef;
 
     leaseRefs = Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -690,6 +698,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
     }
     return new AbfsOutputStreamContext(abfsConfiguration.getSasTokenRenewPeriodForStreamsInSeconds())
             .withWriteBufferSize(bufferSize)
+            .enableExpectHeader(abfsConfiguration.isExpectHeaderEnabled())
             .enableFlush(abfsConfiguration.isFlushEnabled())
             .enableSmallWriteOptimization(abfsConfiguration.isSmallWriteOptimizationEnabled())
             .disableOutputStreamFlush(abfsConfiguration.isOutputStreamFlushDisabled())
@@ -707,6 +716,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
             .withExecutorService(new SemaphoredDelegatingExecutor(boundedThreadPool,
                 blockOutputActiveBlocks, true))
             .withTracingContext(tracingContext)
+            .withAbfsBackRef(fsBackRef)
             .build();
   }
 
@@ -765,7 +775,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
         eTag = ((VersionedFileStatus) fileStatus).getVersion();
       } else {
         if (fileStatus != null) {
-          LOG.warn(
+          LOG.debug(
               "Fallback to getPathStatus REST call as provided filestatus "
                   + "is not of type VersionedFileStatus");
         }
@@ -805,6 +815,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
             .withReadBufferSize(abfsConfiguration.getReadBufferSize())
             .withReadAheadQueueDepth(abfsConfiguration.getReadAheadQueueDepth())
             .withTolerateOobAppends(abfsConfiguration.getTolerateOobAppends())
+            .isReadAheadEnabled(abfsConfiguration.isReadAheadEnabled())
             .withReadSmallFilesCompletely(abfsConfiguration.readSmallFilesCompletely())
             .withOptimizeFooterRead(abfsConfiguration.optimizeFooterRead())
             .withReadAheadRange(abfsConfiguration.getReadAheadRange())
@@ -813,6 +824,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
                 abfsConfiguration.shouldReadBufferSizeAlways())
             .withReadAheadBlockSize(abfsConfiguration.getReadAheadBlockSize())
             .withBufferedPreadDisabled(bufferedPreadDisabled)
+            .withAbfsBackRef(fsBackRef)
             .build();
   }
 
@@ -878,7 +890,22 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
     client.breakLease(getRelativePath(path), tracingContext);
   }
 
-  public void rename(final Path source, final Path destination, TracingContext tracingContext) throws
+  /**
+   * Rename a file or directory.
+   * If a source etag is passed in, the operation will attempt to recover
+   * from a missing source file by probing the destination for
+   * existence and comparing etags.
+   * @param source path to source file
+   * @param destination destination of rename.
+   * @param tracingContext trace context
+   * @param sourceEtag etag of source file. may be null or empty
+   * @throws AzureBlobFileSystemException failure, excluding any recovery from overload failures.
+   * @return true if recovery was needed and succeeded.
+   */
+  public boolean rename(final Path source,
+      final Path destination,
+      final TracingContext tracingContext,
+      final String sourceEtag) throws
           AzureBlobFileSystemException {
     final Instant startAggregate = abfsPerfTracker.getLatencyInstant();
     long countAggregate = 0;
@@ -898,23 +925,32 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
 
     String sourceRelativePath = getRelativePath(source);
     String destinationRelativePath = getRelativePath(destination);
+    // was any operation recovered from?
+    boolean recovered = false;
 
     do {
       try (AbfsPerfInfo perfInfo = startTracking("rename", "renamePath")) {
-        AbfsRestOperation op = client
-            .renamePath(sourceRelativePath, destinationRelativePath,
-                continuation, tracingContext);
+        boolean isNamespaceEnabled = getIsNamespaceEnabled(tracingContext);
+        final AbfsClientRenameResult abfsClientRenameResult =
+            client.renamePath(sourceRelativePath, destinationRelativePath,
+                continuation, tracingContext, sourceEtag, false,
+                    isNamespaceEnabled);
+
+        AbfsRestOperation op = abfsClientRenameResult.getOp();
         perfInfo.registerResult(op.getResult());
         continuation = op.getResult().getResponseHeader(HttpHeaderConfigurations.X_MS_CONTINUATION);
         perfInfo.registerSuccess(true);
         countAggregate++;
         shouldContinue = continuation != null && !continuation.isEmpty();
-
+        // update the recovery flag.
+        recovered |= abfsClientRenameResult.isRenameRecovered();
+        populateRenameRecoveryStatistics(abfsClientRenameResult);
         if (!shouldContinue) {
           perfInfo.registerAggregates(startAggregate, countAggregate);
         }
       }
     } while (shouldContinue);
+    return recovered;
   }
 
   public void delete(final Path path, final boolean recursive,
@@ -1842,6 +1878,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
     private AbfsCounters abfsCounters;
     private DataBlocks.BlockFactory blockFactory;
     private int blockOutputActiveBlocks;
+    private BackReference fsBackRef;
 
     public AzureBlobFileSystemStoreBuilder withUri(URI value) {
       this.uri = value;
@@ -1877,13 +1914,19 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
       return this;
     }
 
+    public AzureBlobFileSystemStoreBuilder withBackReference(
+        BackReference fsBackRef) {
+      this.fsBackRef = fsBackRef;
+      return this;
+    }
+
     public AzureBlobFileSystemStoreBuilder build() {
       return this;
     }
   }
 
   @VisibleForTesting
-  AbfsClient getClient() {
+  public AbfsClient getClient() {
     return this.client;
   }
 
@@ -1932,7 +1975,7 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
    * @param result response to process.
    * @return the quote-unwrapped etag.
    */
-  private static String extractEtagHeader(AbfsHttpOperation result) {
+  public static String extractEtagHeader(AbfsHttpOperation result) {
     String etag = result.getResponseHeader(HttpHeaderConfigurations.ETAG);
     if (etag != null) {
       // strip out any wrapper "" quotes which come back, for consistency with
@@ -1950,5 +1993,20 @@ public class AzureBlobFileSystemStore implements Closeable, ListingSupport {
       }
     }
     return etag;
+  }
+
+  /**
+   * Increment rename recovery based counters in IOStatistics.
+   *
+   * @param abfsClientRenameResult Result of an ABFS rename operation.
+   */
+  private void populateRenameRecoveryStatistics(
+      AbfsClientRenameResult abfsClientRenameResult) {
+    if (abfsClientRenameResult.isRenameRecovered()) {
+      abfsCounters.incrementCounter(RENAME_RECOVERY, 1);
+    }
+    if (abfsClientRenameResult.isIncompleteMetadataState()) {
+      abfsCounters.incrementCounter(METADATA_INCOMPLETE_RENAME_FAILURES, 1);
+    }
   }
 }

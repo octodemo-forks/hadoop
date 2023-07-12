@@ -29,6 +29,7 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.security.AMRMTokenIdentifier;
@@ -53,7 +54,13 @@ public class TestableFederationInterceptor extends FederationInterceptor {
   private AtomicInteger runningIndex = new AtomicInteger(0);
   private MockResourceManagerFacade mockRm;
 
+  private boolean isClientRPC = false;
+
   public TestableFederationInterceptor() {
+  }
+
+  public TestableFederationInterceptor(MockResourceManagerFacade homeRM) {
+    mockRm = homeRM;
   }
 
   public TestableFederationInterceptor(MockResourceManagerFacade homeRM,
@@ -79,6 +86,9 @@ public class TestableFederationInterceptor extends FederationInterceptor {
   @Override
   protected <T> T createHomeRMProxy(AMRMProxyApplicationContext appContext,
       Class<T> protocol, UserGroupInformation user) {
+    if (isClientRPC) {
+      return super.createHomeRMProxy(appContext, protocol, user);
+    }
     synchronized (this) {
       if (mockRm == null) {
         mockRm = new MockResourceManagerFacade(
@@ -205,10 +215,10 @@ public class TestableFederationInterceptor extends FederationInterceptor {
     public UnmanagedApplicationManager createUAM(Configuration conf,
         ApplicationId appId, String queueName, String submitter,
         String appNameSuffix, boolean keepContainersAcrossApplicationAttempts,
-        String rmId) {
+        String rmId, ApplicationSubmissionContext originalAppSubmissionContext) {
       return new TestableUnmanagedApplicationManager(conf, appId, queueName,
           submitter, appNameSuffix, keepContainersAcrossApplicationAttempts,
-          rmId);
+          rmId, originalAppSubmissionContext);
     }
   }
 
@@ -222,9 +232,9 @@ public class TestableFederationInterceptor extends FederationInterceptor {
     public TestableUnmanagedApplicationManager(Configuration conf,
         ApplicationId appId, String queueName, String submitter,
         String appNameSuffix, boolean keepContainersAcrossApplicationAttempts,
-        String rmName) {
+        String rmName, ApplicationSubmissionContext originalAppSubmissionContext) {
       super(conf, appId, queueName, submitter, appNameSuffix,
-          keepContainersAcrossApplicationAttempts, rmName);
+          keepContainersAcrossApplicationAttempts, rmName, originalAppSubmissionContext);
     }
 
     @Override
@@ -249,7 +259,7 @@ public class TestableFederationInterceptor extends FederationInterceptor {
   }
 
   /**
-   * Wrap the handler thread so it calls from the same user.
+   * Wrap the handler thread, so it calls from the same user.
    */
   protected class TestableAMRequestHandlerThread
       extends AMHeartbeatRequestHandler {
@@ -272,5 +282,9 @@ public class TestableFederationInterceptor extends FederationInterceptor {
       } catch (Exception e) {
       }
     }
+  }
+
+  public void setClientRPC(boolean clientRPC) {
+    this.isClientRPC = clientRPC;
   }
 }

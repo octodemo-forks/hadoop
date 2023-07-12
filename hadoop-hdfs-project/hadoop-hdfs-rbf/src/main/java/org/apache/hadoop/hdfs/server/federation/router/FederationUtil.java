@@ -231,7 +231,7 @@ public final class FederationUtil {
   }
 
   /**
-   * Add the the number of children for an existing HdfsFileStatus object.
+   * Add the number of children for an existing HdfsFileStatus object.
    * @param dirStatus HdfsfileStatus object.
    * @param children number of children to be added.
    * @return HdfsFileStatus with the number of children specified.
@@ -274,9 +274,9 @@ public final class FederationUtil {
   /**
    * Collect all configured nameservices.
    *
-   * @param conf
-   * @return Set of name services in config
-   * @throws IllegalArgumentException
+   * @param conf the configuration object.
+   * @return Set of name services in config.
+   * @throws IllegalArgumentException if monitored namenodes are not correctly configured.
    */
   public static Set<String> getAllConfiguredNS(Configuration conf)
       throws IllegalArgumentException {

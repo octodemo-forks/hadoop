@@ -20,9 +20,9 @@ package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity
 
 import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractParentQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerDynamicEditException;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractLeafQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSQueueUtils;
@@ -32,7 +32,6 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AutoCrea
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AutoCreatedQueueManagementPolicy;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.ManagedParentQueue;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.ParentQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.QueueCapacities;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.QueueManagementChange;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
@@ -42,8 +41,6 @@ import org.apache.hadoop.yarn.util.resource.Resources;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -253,35 +250,8 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
     }
   }
 
-  /**
-   * Comparator that orders applications by their submit time
-   */
-  private class PendingApplicationComparator
-      implements Comparator<FiCaSchedulerApp> {
-
-    @Override
-    public int compare(FiCaSchedulerApp app1, FiCaSchedulerApp app2) {
-      RMApp rmApp1 = managedParentQueue.getQueueContext().getRMApp(
-          app1.getApplicationId());
-      RMApp rmApp2 = managedParentQueue.getQueueContext().getRMApp(
-          app2.getApplicationId());
-      if (rmApp1 != null && rmApp2 != null) {
-        return Long.compare(rmApp1.getSubmitTime(), rmApp2.getSubmitTime());
-      } else if (rmApp1 != null) {
-        return -1;
-      } else if (rmApp2 != null) {
-        return 1;
-      } else{
-        return 0;
-      }
-    }
-  }
-
-  private PendingApplicationComparator applicationComparator =
-      new PendingApplicationComparator();
-
   @Override
-  public void init(final ParentQueue parentQueue) throws IOException {
+  public void init(final AbstractParentQueue parentQueue) throws IOException {
     ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     readLock = lock.readLock();
     writeLock = lock.writeLock();
@@ -334,7 +304,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
    *
    * @return List of Queue Management change suggestions which could potentially
    * be committed/rejected by the scheduler due to validation failures
-   * @throws SchedulerDynamicEditException
+   * @throws SchedulerDynamicEditException when compute queueManagement changes fails.
    */
   @Override
   public List<QueueManagementChange> computeQueueManagementChanges()
@@ -445,7 +415,8 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
     try {
       CSQueueUtils.updateAbsoluteCapacitiesByNodeLabels(
           policy.leafQueueTemplate.getQueueCapacities(),
-          parentQueueCapacities, policy.leafQueueTemplateNodeLabels);
+          parentQueueCapacities, policy.leafQueueTemplateNodeLabels,
+          managedParentQueue.getQueueContext().getConfiguration().isLegacyQueueMode());
       policy.leafQueueTemplateCapacities =
           policy.leafQueueTemplate.getQueueCapacities();
     } finally {
@@ -563,7 +534,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
    * queues
    */
   private Map<String, QueueCapacities> deactivateLeafQueuesIfInActive(
-      ParentQueue parentQueue, String nodeLabel,
+      AbstractParentQueue parentQueue, String nodeLabel,
       LeafQueueEntitlements leafQueueEntitlements)
       throws SchedulerDynamicEditException {
     Map<String, QueueCapacities> deactivatedQueues = new HashMap<>();
@@ -622,19 +593,18 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
 
         for (String nodeLabel : updatedQueueTemplate.getQueueCapacities()
             .getExistingNodeLabels()) {
-          if (updatedQueueTemplate.getQueueCapacities().
-              getCapacity(nodeLabel) > 0) {
+          if (updatedQueueTemplate.getQueueCapacities().getCapacity(nodeLabel) > 0) {
             if (isActive(leafQueue, nodeLabel)) {
               LOG.debug("Queue is already active. Skipping activation : {}",
                   leafQueue.getQueuePath());
             } else{
               activate(leafQueue, nodeLabel);
             }
-          } else{
+          } else {
             if (!isActive(leafQueue, nodeLabel)) {
               LOG.debug("Queue is already de-activated. Skipping "
                   + "de-activation : {}", leafQueue.getQueuePath());
-            } else{
+            } else {
               /**
                * While deactivating queues of type ABSOLUTE_RESOURCE, configured
                * min resource has to be set based on updated capacity (which is
@@ -643,7 +613,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
                * leads to incorrect results.
                */
               leafQueue
-                  .mergeCapacities(updatedQueueTemplate.getQueueCapacities());
+                  .mergeCapacities(updatedQueueTemplate.getQueueCapacities(), leafQueueTemplate.getResourceQuotas());
               leafQueue.getQueueResourceQuotas()
                   .setConfiguredMinResource(Resources.multiply(
                       managedParentQueue.getQueueContext().getClusterResource(),
@@ -689,7 +659,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
   }
 
   @Override
-  public void reinitialize(final ParentQueue parentQueue) throws IOException {
+  public void reinitialize(final AbstractParentQueue parentQueue) throws IOException {
     if (!(parentQueue instanceof ManagedParentQueue)) {
       throw new IllegalStateException(
           "Expected instance of type " + ManagedParentQueue.class + " found  "
@@ -809,7 +779,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
   private List<FiCaSchedulerApp> getSortedPendingApplications() {
     List<FiCaSchedulerApp> apps = new ArrayList<>(
         managedParentQueue.getAllApplications());
-    Collections.sort(apps, applicationComparator);
+    apps.sort(managedParentQueue.getQueueContext().getApplicationComparator());
     return apps;
   }
 
@@ -817,6 +787,7 @@ public class GuaranteedOrZeroCapacityOverTimePolicy
     AutoCreatedLeafQueueConfig.Builder templateBuilder =
         new AutoCreatedLeafQueueConfig.Builder();
     templateBuilder.capacities(capacities);
+    templateBuilder.resourceQuotas(managedParentQueue.getLeafQueueTemplate().getResourceQuotas());
     return new AutoCreatedLeafQueueConfig(templateBuilder);
   }
 }

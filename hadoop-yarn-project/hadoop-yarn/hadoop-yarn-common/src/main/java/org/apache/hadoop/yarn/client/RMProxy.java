@@ -70,6 +70,8 @@ public class RMProxy<T> {
 
   /**
    * Verify the passed protocol is supported.
+   *
+   * @param protocol protocol.
    */
   @Private
   public void checkAllowedProtocols(Class<?> protocol) {}
@@ -77,6 +79,11 @@ public class RMProxy<T> {
   /**
    * Get the ResourceManager address from the provided Configuration for the
    * given protocol.
+   *
+   * @param conf configuration.
+   * @param protocol protocol.
+   * @return inet socket address.
+   * @throws IOException io error occur.
    */
   @Private
   public InetSocketAddress getRMAddress(
@@ -91,6 +98,13 @@ public class RMProxy<T> {
    * this is a direct connection to the ResourceManager address. When HA is
    * enabled, the proxy handles the failover between the ResourceManagers as
    * well.
+   *
+   * @param configuration configuration.
+   * @param protocol protocol.
+   * @param instance RMProxy instance.
+   * @param <T> Generic T.
+   * @return RMProxy.
+   * @throws IOException io error occur.
    */
   @Private
   protected static <T> T createRMProxy(final Configuration configuration,
@@ -98,9 +112,46 @@ public class RMProxy<T> {
     YarnConfiguration conf = (configuration instanceof YarnConfiguration)
         ? (YarnConfiguration) configuration
         : new YarnConfiguration(configuration);
-    RetryPolicy retryPolicy = createRetryPolicy(conf,
-        (HAUtil.isHAEnabled(conf) || HAUtil.isFederationFailoverEnabled(conf)));
+    RetryPolicy retryPolicy = createRetryPolicy(conf, isFailoverEnabled(conf));
     return newProxyInstance(conf, protocol, instance, retryPolicy);
+  }
+
+  /**
+   * This functionality is only used for NodeManager and only in non-HA mode.
+   * Its purpose is to ensure that when initializes UAM, it can find the correct cluster.
+   *
+   * @param configuration configuration.
+   * @param protocol protocol.
+   * @param instance RMProxy instance.
+   * @return RMProxy.
+   * @param <T> Generic T.
+   * @throws IOException io error occur.
+   */
+  protected static <T> T createRMProxyFederation(final Configuration configuration,
+      final Class<T> protocol, RMProxy<T> instance) throws IOException {
+    YarnConfiguration yarnConf = new YarnConfiguration(configuration);
+    if (isFederationNonHAEnabled(yarnConf)) {
+      RetryPolicy retryPolicy = createRetryPolicy(yarnConf, isFailoverEnabled(yarnConf));
+      return newProxyInstanceFederation(yarnConf, protocol, instance, retryPolicy);
+    }
+    return createRMProxy(configuration, protocol, instance);
+  }
+
+  protected static <T> T newProxyInstanceFederation(final YarnConfiguration conf,
+      final Class<T> protocol, RMProxy<T> instance, RetryPolicy retryPolicy) {
+    RMFailoverProxyProvider<T> provider = getRMFailoverProxyProvider(conf, protocol, instance);
+    return (T) RetryProxy.create(protocol, provider, retryPolicy);
+  }
+
+  protected static <T> RMFailoverProxyProvider<T> getRMFailoverProxyProvider(
+      final YarnConfiguration conf, final Class<T> protocol, RMProxy<T> instance) {
+    RMFailoverProxyProvider<T> provider;
+    if (isFederationNonHAEnabled(conf)) {
+      provider = instance.createRMFailoverProxyProvider(conf, protocol);
+    } else {
+      provider = instance.createNonHaRMFailoverProxyProvider(conf, protocol);
+    }
+    return provider;
   }
 
   /**
@@ -109,6 +160,15 @@ public class RMProxy<T> {
    * this is a direct connection to the ResourceManager address. When HA is
    * enabled, the proxy handles the failover between the ResourceManagers as
    * well.
+   *
+   * @param configuration configuration.
+   * @param protocol protocol.
+   * @param instance RMProxy instance.
+   * @param retryTime retry Time.
+   * @param retryInterval retry Interval.
+   * @param <T> Generic T.
+   * @return RMProxy.
+   * @throws IOException io error occur.
    */
   @Private
   protected static <T> T createRMProxy(final Configuration configuration,
@@ -126,7 +186,7 @@ public class RMProxy<T> {
       final Class<T> protocol, RMProxy<T> instance, RetryPolicy retryPolicy)
           throws IOException{
     RMFailoverProxyProvider<T> provider;
-    if (HAUtil.isHAEnabled(conf) || HAUtil.isFederationEnabled(conf)) {
+    if (isFailoverEnabled(conf)) {
       provider = instance.createRMFailoverProxyProvider(conf, protocol);
     } else {
       provider = instance.createNonHaRMFailoverProxyProvider(conf, protocol);
@@ -137,6 +197,13 @@ public class RMProxy<T> {
   /**
    * Get a proxy to the RM at the specified address. To be used to create a
    * RetryProxy.
+   *
+   * @param conf configuration.
+   * @param protocol protocol.
+   * @param rmAddress rmAddress.
+   * @param <T> Generic T.
+   * @return RM proxy.
+   * @throws IOException io error occur.
    */
   @Private
   public <T> T getProxy(final Configuration conf,
@@ -196,7 +263,11 @@ public class RMProxy<T> {
   }
 
   /**
-   * Fetch retry policy from Configuration
+   * Fetch retry policy from Configuration.
+   *
+   * @param conf configuration.
+   * @param isHAEnabled is HA enabled.
+   * @return RetryPolicy.
    */
   @Private
   @VisibleForTesting
@@ -219,6 +290,12 @@ public class RMProxy<T> {
   /**
    * Fetch retry policy from Configuration and create the
    * retry policy with specified retryTime and retry interval.
+   *
+   * @param conf configuration.
+   * @param retryTime retry time.
+   * @param retryInterval retry interval.
+   * @param isHAEnabled is HA enabled.
+   * @return RetryPolicy.
    */
   protected static RetryPolicy createRetryPolicy(Configuration conf,
       long retryTime, long retryInterval, boolean isHAEnabled) {
@@ -300,7 +377,40 @@ public class RMProxy<T> {
     // YARN-4288: local IOException is also possible.
     exceptionToPolicyMap.put(IOException.class, retryPolicy);
     // Not retry on remote IO exception.
-    return RetryPolicies.retryOtherThanRemoteException(
+    return RetryPolicies.retryOtherThanRemoteAndSaslException(
         RetryPolicies.TRY_ONCE_THEN_FAIL, exceptionToPolicyMap);
+  }
+
+  private static boolean isFailoverEnabled(YarnConfiguration conf) {
+    if (HAUtil.isHAEnabled(conf)) {
+      // Considering Resource Manager HA is enabled.
+      return true;
+    }
+    if (HAUtil.isFederationEnabled(conf) && HAUtil.isFederationFailoverEnabled(conf)) {
+      // Considering both federation and federation failover are enabled.
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * If RM is not configured with HA, NM will not configure yarn.resourcemanager.ha.rmIds locally.
+   *
+   * If federation mode is enabled and RMProxy#isFailoverEnabled returns true,
+   * when NM starts Container, it will try to find the yarn.resourcemanager.ha.rmIds property.
+   *
+   * However, an error will occur because this property is not configured
+   * if the user has not configured HA.
+   *
+   * To solve this issue, we can configure the yarn.federation.no-ha.enabled property in NM,
+   * which tells NM to run in a non-HA environment.
+   *
+   * @param conf YarnConfiguration
+   * @return true, federation support non-HA, false, federation not support non-HA.
+   */
+  private static boolean isFederationNonHAEnabled(YarnConfiguration conf) {
+    boolean isNonHAEnabled = conf.getBoolean(YarnConfiguration.FEDERATION_NON_HA_ENABLED,
+        YarnConfiguration.DEFAULT_FEDERATION_NON_HA_ENABLED);
+    return isNonHAEnabled;
   }
 }

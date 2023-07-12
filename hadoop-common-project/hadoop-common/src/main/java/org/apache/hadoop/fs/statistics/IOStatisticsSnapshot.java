@@ -53,7 +53,7 @@ import static org.apache.hadoop.fs.statistics.impl.IOStatisticsBinding.snapshotM
  * deserialized. If for some reason this is required, use
  * {@link #requiredSerializationClasses()} to get the list of classes
  * used when deserializing instances of this object.
- * <p>
+ * </p>
  * <p>
  * It is annotated for correct serializations with jackson2.
  * </p>
@@ -62,7 +62,8 @@ import static org.apache.hadoop.fs.statistics.impl.IOStatisticsBinding.snapshotM
 @InterfaceAudience.Public
 @InterfaceStability.Evolving
 public final class IOStatisticsSnapshot
-    implements IOStatistics, Serializable, IOStatisticsAggregator {
+    implements IOStatistics, Serializable, IOStatisticsAggregator,
+    IOStatisticsSetters {
 
   private static final long serialVersionUID = -1762522703841538084L;
 
@@ -223,6 +224,33 @@ public final class IOStatisticsSnapshot
   }
 
   @Override
+  public synchronized void setCounter(final String key, final long value) {
+    counters().put(key, value);
+  }
+
+  @Override
+  public synchronized void setGauge(final String key, final long value) {
+    gauges().put(key, value);
+
+  }
+
+  @Override
+  public synchronized void setMaximum(final String key, final long value) {
+    maximums().put(key, value);
+
+  }
+
+  @Override
+  public synchronized void setMinimum(final String key, final long value) {
+    minimums().put(key, value);
+  }
+
+  @Override
+  public void setMeanStatistic(final String key, final MeanStatistic value) {
+    meanStatistics().put(key, value);
+  }
+
+  @Override
   public String toString() {
     return ioStatisticsToString(this);
   }
@@ -238,6 +266,8 @@ public final class IOStatisticsSnapshot
   /**
    * Serialize by converting each map to a TreeMap, and saving that
    * to the stream.
+   * @param s ObjectOutputStream.
+   * @throws IOException raised on errors performing I/O.
    */
   private synchronized void writeObject(ObjectOutputStream s)
       throws IOException {
@@ -253,6 +283,10 @@ public final class IOStatisticsSnapshot
   /**
    * Deserialize by loading each TreeMap, and building concurrent
    * hash maps from them.
+   *
+   * @param s ObjectInputStream.
+   * @throws IOException raised on errors performing I/O.
+   * @throws ClassNotFoundException class not found exception
    */
   private void readObject(final ObjectInputStream s)
       throws IOException, ClassNotFoundException {

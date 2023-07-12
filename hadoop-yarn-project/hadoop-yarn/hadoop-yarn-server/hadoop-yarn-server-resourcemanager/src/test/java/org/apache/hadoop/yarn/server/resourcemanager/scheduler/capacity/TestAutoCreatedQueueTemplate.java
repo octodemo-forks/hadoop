@@ -67,6 +67,22 @@ public class TestAutoCreatedQueueTemplate {
   }
 
   @Test
+  public void testTwoLevelWildcardTemplate() {
+    conf.set(getTemplateKey("root.*", "capacity"), "6w");
+    conf.set(getTemplateKey("root.*.*", "capacity"), "5w");
+
+    new AutoCreatedQueueTemplate(conf, TEST_QUEUE_A)
+            .setTemplateEntriesForChild(conf, TEST_QUEUE_AB.getFullPath());
+    new AutoCreatedQueueTemplate(conf, TEST_QUEUE_AB)
+            .setTemplateEntriesForChild(conf, TEST_QUEUE_ABC.getFullPath());
+
+    Assert.assertEquals("weight is not set", 6f,
+            conf.getNonLabeledQueueWeight(TEST_QUEUE_AB.getFullPath()), 10e-6);
+    Assert.assertEquals("weight is not set", 5f,
+            conf.getNonLabeledQueueWeight(TEST_QUEUE_ABC.getFullPath()), 10e-6);
+  }
+
+  @Test
   public void testIgnoredWhenRootWildcarded() {
     conf.set(getTemplateKey("*", "capacity"), "6w");
     AutoCreatedQueueTemplate template =
@@ -86,6 +102,17 @@ public class TestAutoCreatedQueueTemplate {
 
     Assert.assertEquals("weight is set", -1f,
         conf.getNonLabeledQueueWeight(ROOT), 10e-6);
+  }
+
+  @Test
+  public void testWildcardAfterRoot() {
+    conf.set(getTemplateKey("root.*", "acl_submit_applications"), "user");
+    AutoCreatedQueueTemplate template =
+        new AutoCreatedQueueTemplate(conf, new QueuePath("root.a"));
+    template.setTemplateEntriesForChild(conf, "root.a");
+
+    Assert.assertEquals("acl_submit_applications is set", "user",
+        template.getTemplateProperties().get("acl_submit_applications"));
   }
 
   @Test

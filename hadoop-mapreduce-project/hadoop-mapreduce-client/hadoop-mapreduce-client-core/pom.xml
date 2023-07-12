@@ -45,6 +45,12 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-hdfs-client</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.json</groupId>
+          <artifactId>json</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
@@ -97,9 +103,14 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-	<configuration>
+        <configuration>
           <systemPropertyVariables>
             <log4j.configuration>file:///${project.basedir}/src/test/resources/log4j.properties</log4j.configuration>
+
+            <!-- project directory   (target/) on a maven build. -->
+            <project.build.directory>${project.build.directory}</project.build.directory>
+            <!-- this property is used in hadoop-azure with separate paths for parallel runs -->
+            <test.build.dir>${project.build.directory}</test.build.dir>
           </systemPropertyVariables>
         </configuration>
       </plugin>
@@ -125,10 +136,10 @@
               <goal>run</goal>
             </goals>
             <configuration>
-              <tasks>
+              <target>
                 <copy file="src/main/resources/mapred-default.xml" todir="src/site/resources"/>
                 <copy file="../../../hadoop-common-project/hadoop-common/src/main/xsl/configuration.xsl" todir="src/site/resources"/>
-              </tasks>
+              </target>
             </configuration>
           </execution>
         </executions>

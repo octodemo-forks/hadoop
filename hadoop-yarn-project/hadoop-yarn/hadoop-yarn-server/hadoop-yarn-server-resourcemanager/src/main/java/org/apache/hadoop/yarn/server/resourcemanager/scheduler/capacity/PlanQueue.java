@@ -21,8 +21,10 @@ package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 import java.io.IOException;
 
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.server.resourcemanager.reservation.ReservationConstants;
 import org.apache.hadoop.yarn.server.resourcemanager.reservation.ReservationSystem;
 
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerDynamicEditException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +47,7 @@ public class PlanQueue extends AbstractManagedParentQueue {
   public PlanQueue(CapacitySchedulerQueueContext queueContext, String queueName,
       CSQueue parent, CSQueue old) throws IOException {
     super(queueContext, queueName, parent, old);
+    super.setupQueueConfigs(queueContext.getClusterResource());
     updateAbsoluteCapacities();
 
     // Set the reservation queue attributes for the Plan
@@ -123,6 +126,23 @@ public class PlanQueue extends AbstractManagedParentQueue {
     }
   }
 
+  public ReservationQueue initializeDefaultInternalQueue() throws IOException {
+    //initializing the "internal" default queue, for SLS compatibility
+    String defReservationId =
+        getQueueName() + ReservationConstants.DEFAULT_QUEUE_SUFFIX;
+
+    ReservationQueue resQueue = new ReservationQueue(queueContext,
+        defReservationId, this);
+    try {
+      resQueue.initializeEntitlements();
+    } catch (SchedulerDynamicEditException e) {
+      throw new IllegalStateException(e);
+    }
+    childQueues.add(resQueue);
+
+    return resQueue;
+  }
+
   private void updateQuotas(float newUserLimit, float newUserLimitFactor,
       int newMaxAppsForReservation, int newMaxAppsPerUserForReservation) {
     this.userLimit = newUserLimit;
@@ -169,7 +189,8 @@ public class PlanQueue extends AbstractManagedParentQueue {
   }
 
   /**
-   * Determine whether to hide/show the ReservationQueues
+   * Determine whether to hide/show the ReservationQueues.
+   * @return true, show ReservationQueues; false, hide ReservationQueues.
    */
   public boolean showReservationsAsQueues() {
     return showReservationsAsQueues;

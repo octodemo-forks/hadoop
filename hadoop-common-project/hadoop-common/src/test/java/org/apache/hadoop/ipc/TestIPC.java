@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.ipc;
 
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -34,7 +35,6 @@ import static org.mockito.Mockito.verify;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataOutput;
-import java.io.EOFException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -49,7 +49,6 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
-import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -93,8 +92,8 @@ import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.test.LambdaTestUtils;
-import org.apache.hadoop.test.Whitebox;
 import org.apache.hadoop.util.StringUtils;
+import org.assertj.core.api.Condition;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -618,51 +617,6 @@ public class TestIPC {
       WRITABLE_FAULTS_SLEEP = 0;
     }
   }
-
-  /**
-   * Test for HADOOP-18024.
-   */
-  @Test(timeout=60000)
-  public void testIOEOnListenerAccept() throws Exception {
-    // start server
-    Server server = new TestServer(1, false,
-            LongWritable.class, LongWritable.class) {
-      @Override
-      protected void configureSocketChannel(SocketChannel channel) throws IOException {
-        maybeThrowIOE();
-        super.configureSocketChannel(channel);
-      }
-    };
-    InetSocketAddress addr = NetUtils.getConnectAddress(server);
-    server.start();
-
-    // start client
-    WRITABLE_FAULTS_ENABLED = true;
-    Client client = new Client(LongWritable.class, conf);
-    try {
-      LongWritable param = LongWritable.class.newInstance();
-
-      try {
-        call(client, param, addr, 0, conf);
-        fail("Expected an exception to have been thrown");
-      } catch (EOFException e) {
-        LOG.info("Got expected exception", e);
-      } catch (Throwable t) {
-        LOG.warn("Got unexpected error", t);
-        fail("Expected an EOFException to have been thrown");
-      }
-
-      // Doing a second call with faults disabled should return fine --
-      // ie the internal state of the client or server should not be broken
-      // by the failed call
-      WRITABLE_FAULTS_ENABLED = false;
-      call(client, param, addr, 0, conf);
-
-    } finally {
-      client.stop();
-      server.stop();
-    }
-  }
   
   private static void assertExceptionContains(
       Throwable t, String substring) {
@@ -862,6 +816,81 @@ public class TestIPC {
     }
   }
 
+  /**
+   * The {@link ConnectionId#hashCode} has to be stable despite updates that occur as the the
+   * address evolves over time.  The {@link ConnectionId} is used as a primary key in maps, so
+   * its hashCode can't change.
+   *
+   * @throws IOException if there is a client or server failure
+   */
+  @Test
+  public void testStableHashCode() throws IOException {
+    Server server = new TestServer(5, false);
+    try {
+      server.start();
+
+      // Leave host unresolved to start. Use "localhost" as opposed
+      // to local IP from NetUtils.getConnectAddress(server) to force
+      // resolution later
+      InetSocketAddress unresolvedAddr = InetSocketAddress.createUnresolved(
+          "localhost", NetUtils.getConnectAddress(server).getPort());
+
+      // Setup: Create a ConnectionID using an unresolved address, and get it's hashCode to serve
+      // as a point of comparison.
+      int rpcTimeout = MIN_SLEEP_TIME * 2;
+      final ConnectionId remoteId = getConnectionId(unresolvedAddr, rpcTimeout, conf);
+      int expected = remoteId.hashCode();
+
+      // Start client
+      Client.setConnectTimeout(conf, 100);
+      Client client = new Client(LongWritable.class, conf);
+      try {
+        // Test: Call should re-resolve host and succeed
+        LongWritable param = new LongWritable(RANDOM.nextLong());
+        client.call(RPC.RpcKind.RPC_BUILTIN, param, remoteId,
+            RPC.RPC_SERVICE_CLASS_DEFAULT, null);
+        int actual = remoteId.hashCode();
+
+        // Verify: The hashCode should match, although the InetAddress is different since it has
+        // now been resolved
+        assertThat(remoteId.getAddress()).isNotEqualTo(unresolvedAddr);
+        assertThat(remoteId.getAddress().getHostName()).isEqualTo(unresolvedAddr.getHostName());
+        assertThat(remoteId.hashCode()).isEqualTo(expected);
+
+        // Test: Call should succeed without having to re-resolve
+        InetSocketAddress expectedSocketAddress = remoteId.getAddress();
+        param = new LongWritable(RANDOM.nextLong());
+        client.call(RPC.RpcKind.RPC_BUILTIN, param, remoteId,
+            RPC.RPC_SERVICE_CLASS_DEFAULT, null);
+
+        // Verify: The same instance of the InetSocketAddress has been used to make the second
+        // call
+        assertThat(remoteId.getAddress()).isSameAs(expectedSocketAddress);
+
+        // Verify: The hashCode is protected against updates to the host name
+        String hostName = InetAddress.getLocalHost().getHostName();
+        InetSocketAddress mismatchedHostName = NetUtils.createSocketAddr(
+            InetAddress.getLocalHost().getHostName(),
+            remoteId.getAddress().getPort());
+        assertThatExceptionOfType(IllegalArgumentException.class)
+            .isThrownBy(() -> remoteId.setAddress(mismatchedHostName))
+            .withMessageStartingWith("Hostname must match");
+
+        // Verify: The hashCode is protected against updates to the port
+        InetSocketAddress mismatchedPort = NetUtils.createSocketAddr(
+            remoteId.getAddress().getHostName(),
+            remoteId.getAddress().getPort() + 1);
+        assertThatExceptionOfType(IllegalArgumentException.class)
+            .isThrownBy(() -> remoteId.setAddress(mismatchedPort))
+            .withMessageStartingWith("Port must match");
+      } finally {
+        client.stop();
+      }
+    } finally {
+      server.stop();
+    }
+  }
+
   @Test(timeout=60000)
   public void testIpcFlakyHostResolution() throws IOException {
     // start server
@@ -908,7 +937,6 @@ public class TestIPC {
   // goal is to jam a handler with a connection, fill the callq with
   // connections, in turn jamming the readers - then flood the server and
   // ensure that the listener blocks when the reader connection queues fill
-  @SuppressWarnings("unchecked")
   private void checkBlocking(int readers, int readerQ, int callQ) throws Exception {
     int handlers = 1; // makes it easier
     
@@ -928,9 +956,8 @@ public class TestIPC {
     // start server
     final TestServerQueue server =
         new TestServerQueue(clients, readers, callQ, handlers, conf);
-    CallQueueManager<Call> spy = spy(
-        (CallQueueManager<Call>)Whitebox.getInternalState(server, "callQueue"));
-    Whitebox.setInternalState(server, "callQueue", spy);
+    CallQueueManager<Call> spy = spy(server.getCallQueue());
+    server.setCallQueue(spy);
     final InetSocketAddress addr = NetUtils.getConnectAddress(server);
     server.start();
 
@@ -1141,6 +1168,10 @@ public class TestIPC {
 
     call(client, addr, serviceClass, conf);
     Connection connection = server.getConnections()[0];
+    LOG.info("Connection is from: {}", connection);
+    assertEquals(
+        "Connection string representation should include both IP address and Host name", 2,
+        connection.toString().split(" / ").length);
     int serviceClass2 = connection.getServiceClass();
     assertFalse(noChanged ^ serviceClass == serviceClass2);
     client.stop();
@@ -1189,11 +1220,6 @@ public class TestIPC {
   @Test(timeout=30000)
   public void testInterrupted() {
     Client client = new Client(LongWritable.class, conf);
-    Client.getClientExecutor().submit(new Runnable() {
-      public void run() {
-        while(true);
-      }
-    });
     Thread.currentThread().interrupt();
     client.stop();
     try {
@@ -1314,7 +1340,7 @@ public class TestIPC {
   /**
    * Test the retry count while used in a retry proxy.
    */
-  @Test(timeout=60000)
+  @Test(timeout=100000)
   public void testRetryProxy() throws IOException {
     final Client client = new Client(LongWritable.class, conf);
     
@@ -1700,6 +1726,47 @@ public class TestIPC {
   @Test
   public void testProxyUserBinding() throws Exception {
     checkUserBinding(true);
+  }
+
+  @Test(timeout=60000)
+  public void testUpdateAddressEnsureResolved() throws Exception {
+    // start server
+    Server server = new TestServer(1, false);
+    server.start();
+
+    SocketFactory mockFactory = Mockito.mock(SocketFactory.class);
+    doThrow(new ConnectTimeoutException("fake")).when(mockFactory)
+        .createSocket();
+    Client client = new Client(LongWritable.class, conf, mockFactory);
+    InetSocketAddress address =
+        new InetSocketAddress("localhost", NetUtils.getFreeSocketPort());
+    ConnectionId remoteId = getConnectionId(address, 100, conf);
+    try {
+      LambdaTestUtils.intercept(IOException.class, (Callable<Void>) () -> {
+        client.call(RpcKind.RPC_BUILTIN, new LongWritable(RANDOM.nextLong()),
+            remoteId, RPC.RPC_SERVICE_CLASS_DEFAULT, null);
+        return null;
+      });
+
+      assertFalse(address.isUnresolved());
+      assertFalse(remoteId.getAddress().isUnresolved());
+      assertEquals(System.identityHashCode(remoteId.getAddress()),
+          System.identityHashCode(address));
+
+      NetUtils.addStaticResolution("localhost", "host.invalid");
+      LambdaTestUtils.intercept(IOException.class, (Callable<Void>) () -> {
+        client.call(RpcKind.RPC_BUILTIN, new LongWritable(RANDOM.nextLong()),
+            remoteId, RPC.RPC_SERVICE_CLASS_DEFAULT, null);
+        return null;
+      });
+
+      assertFalse(remoteId.getAddress().isUnresolved());
+      assertEquals(System.identityHashCode(remoteId.getAddress()),
+          System.identityHashCode(address));
+    } finally {
+      client.stop();
+      server.stop();
+    }
   }
 
   private void checkUserBinding(boolean asProxy) throws Exception {

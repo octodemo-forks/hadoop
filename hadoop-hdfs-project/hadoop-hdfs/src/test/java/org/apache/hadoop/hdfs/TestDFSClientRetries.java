@@ -60,6 +60,7 @@ import org.apache.hadoop.fs.FileChecksum;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.SafeModeAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.client.HdfsUtils;
@@ -69,7 +70,6 @@ import org.apache.hadoop.hdfs.protocol.ClientDatanodeProtocol;
 import org.apache.hadoop.hdfs.protocol.DatanodeID;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
-import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
@@ -384,7 +384,7 @@ public class TestDFSClientRetries {
       cluster.waitActive();
       NamenodeProtocols spyNN = spy(cluster.getNameNodeRpc());
       Mockito.doThrow(new SocketTimeoutException()).when(spyNN).renewLease(
-          Mockito.anyString());
+          Mockito.anyString(), any());
       DFSClient client = new DFSClient(null, spyNN, conf, null);
       // Get hold of the lease renewer instance used by the client
       final LeaseRenewer leaseRenewer1 = client.getLeaseRenewer();
@@ -392,7 +392,7 @@ public class TestDFSClientRetries {
       OutputStream out1 = client.create(file1, false);
 
       Mockito.verify(spyNN, timeout(10000).times(1)).renewLease(
-          Mockito.anyString());
+          Mockito.anyString(), any());
       verifyEmptyLease(leaseRenewer1);
       GenericTestUtils.waitFor(() -> !(leaseRenewer1.isRunning()), 100, 10000);
       try {
@@ -406,12 +406,12 @@ public class TestDFSClientRetries {
       // Verify DFSClient can do write operation after renewLease no longer
       // throws SocketTimeoutException.
       Mockito.doNothing().when(spyNN).renewLease(
-          Mockito.anyString());
+          Mockito.anyString(), any());
       final LeaseRenewer leaseRenewer2 = client.getLeaseRenewer();
       leaseRenewer2.setRenewalTime(100);
       OutputStream out2 = client.create(file2, false);
       Mockito.verify(spyNN, timeout(10000).times(2)).renewLease(
-          Mockito.anyString());
+          Mockito.anyString(), any());
       out2.write(new byte[256]);
       out2.close();
       verifyEmptyLease(leaseRenewer2);
@@ -1120,7 +1120,7 @@ public class TestDFSClientRetries {
 
       //enter safe mode
       assertTrue(HdfsUtils.isHealthy(uri));
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+      dfs.setSafeMode(SafeModeAction.ENTER);
       assertFalse(HdfsUtils.isHealthy(uri));
       
       //leave safe mode in a new thread
@@ -1131,7 +1131,7 @@ public class TestDFSClientRetries {
             //sleep and then leave safe mode
             TimeUnit.SECONDS.sleep(30);
             assertFalse(HdfsUtils.isHealthy(uri));
-            dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+            dfs.setSafeMode(SafeModeAction.LEAVE);
             assertTrue(HdfsUtils.isHealthy(uri));
           } catch (Exception e) {
             exceptions.add(e);
@@ -1309,7 +1309,7 @@ public class TestDFSClientRetries {
           try {
             //1. trigger get LeaseRenewer lock
             Mockito.doThrow(new SocketTimeoutException()).when(spyNN)
-                .renewLease(Mockito.anyString());
+                .renewLease(Mockito.anyString(), any());
           } catch (IOException e) {
             e.printStackTrace();
           }

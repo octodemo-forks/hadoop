@@ -47,18 +47,18 @@ import static org.apache.hadoop.fs.statistics.IOStatisticsSupport.retrieveIOStat
  * with IOStatisticsSource passthrough, and of conversions of
  * the iterators to lists/arrays and of performing actions
  * on the values.
- * <p></p>
+ * <p>
  * This aims to make it straightforward to use lambda-expressions to
  * transform the results of an iterator, without losing the statistics
  * in the process, and to chain the operations together.
- * <p></p>
+ * </p>
  * The closeable operation will be passed through RemoteIterators which
  * wrap other RemoteIterators. This is to support any iterator which
  * can be closed to release held connections, file handles etc.
  * Unless client code is written to assume that RemoteIterator instances
  * may be closed, this is not likely to be broadly used. It is added
  * to make it possible to adopt this feature in a managed way.
- * <p></p>
+ * <p>
  * One notable feature is that the
  * {@link #foreach(RemoteIterator, ConsumerRaisingIOE)} method will
  * LOG at debug any IOStatistics provided by the iterator, if such
@@ -66,7 +66,7 @@ import static org.apache.hadoop.fs.statistics.IOStatisticsSupport.retrieveIOStat
  * if the LOG is not set to debug, so it is a zero cost feature unless
  * the logger {@code org.apache.hadoop.fs.functional.RemoteIterators}
  * is at DEBUG.
- * <p></p>
+ * </p>
  * Based on the S3A Listing code, and some some work on moving other code
  * to using iterative listings so as to pick up the statistics.
  */
@@ -99,6 +99,7 @@ public final class RemoteIterators {
   /**
    * Create a remote iterator from a java.util.Iterator.
    * @param <T> type
+   * @param iterator iterator.
    * @return a remote iterator
    */
   public static <T> RemoteIterator<T> remoteIteratorFromIterator(
@@ -110,6 +111,7 @@ public final class RemoteIterators {
    * Create a remote iterator from a java.util.Iterable -e.g. a list
    * or other collection.
    * @param <T> type
+   * @param iterable iterable.
    * @return a remote iterator
    */
   public static <T> RemoteIterator<T> remoteIteratorFromIterable(
@@ -120,6 +122,7 @@ public final class RemoteIterators {
   /**
    * Create a remote iterator from an array.
    * @param <T> type
+   * @param array array.
    * @return a remote iterator
    */
   public static <T> RemoteIterator<T> remoteIteratorFromArray(T[] array) {
@@ -158,10 +161,11 @@ public final class RemoteIterators {
    * Create a RemoteIterator from a RemoteIterator and a filter
    * function which returns true for every element to be passed
    * through.
-   * <p></p>
+   * <p>
    * Elements are filtered in the hasNext() method; if not used
    * the filtering will be done on demand in the {@code next()}
    * call.
+   * </p>
    * @param <S> type
    * @param iterator source
    * @param filter filter
@@ -185,6 +189,37 @@ public final class RemoteIterators {
       RemoteIterator<S> iterator,
       Closeable toClose) {
     return new CloseRemoteIterator<>(iterator, toClose);
+  }
+
+  /**
+   * Wrap an iterator with one which adds a continuation probe.
+   * This allows work to exit fast without complicated breakout logic
+   * @param iterator source
+   * @param continueWork predicate which will trigger a fast halt if it returns false.
+   * @param <S> source type.
+   * @return a new iterator
+   */
+  public static <S> RemoteIterator<S> haltableRemoteIterator(
+      final RemoteIterator<S> iterator,
+      final CallableRaisingIOE<Boolean> continueWork) {
+    return new HaltableRemoteIterator<>(iterator, continueWork);
+  }
+
+  /**
+   * A remote iterator which simply counts up, stopping once the
+   * value is greater than the value of {@code excludedFinish}.
+   * This is primarily for tests or when submitting work into a TaskPool.
+   * equivalent to
+   * <pre>
+   *   for(long l = start, l &lt; excludedFinish; l++) yield l;
+   * </pre>
+   * @param start start value
+   * @param excludedFinish excluded finish
+   * @return an iterator which returns longs from [start, finish)
+   */
+  public static RemoteIterator<Long> rangeExcludingIterator(
+      final long start, final long excludedFinish) {
+    return new RangeExcludingLongIterator(start, excludedFinish);
   }
 
   /**
@@ -218,16 +253,16 @@ public final class RemoteIterators {
 
   /**
    * Apply an operation to all values of a RemoteIterator.
-   * <p></p>
+   *
    * If the iterator is an IOStatisticsSource returning a non-null
    * set of statistics, <i>and</i> this classes log is set to DEBUG,
    * then the statistics of the operation are evaluated and logged at
    * debug.
-   * <p></p>
+   * <p>
    * The number of entries processed is returned, as it is useful to
    * know this, especially during tests or when reporting values
    * to users.
-   * <p></p>
+   * </p>
    * This does not close the iterator afterwards.
    * @param source iterator source
    * @param consumer consumer of the values.
@@ -387,10 +422,12 @@ public final class RemoteIterators {
   /**
    * Wrapper of another remote iterator; IOStatistics
    * and Closeable methods are passed down if implemented.
+   * This class may be subclassed within the hadoop codebase
+   * if custom iterators are needed.
    * @param <S> source type
    * @param <T> type of returned value
    */
-  private static abstract class WrappingRemoteIterator<S, T>
+  public static abstract class WrappingRemoteIterator<S, T>
       implements RemoteIterator<T>, IOStatisticsSource, Closeable {
 
     /**
@@ -711,4 +748,93 @@ public final class RemoteIterators {
       }
     }
   }
+
+  /**
+   * An iterator which allows for a fast exit predicate.
+   * @param <S> source type
+   */
+  private static final class HaltableRemoteIterator<S>
+      extends WrappingRemoteIterator<S, S> {
+
+    /**
+     * Probe as to whether work should continue.
+     */
+    private final CallableRaisingIOE<Boolean> continueWork;
+
+    /**
+     * Wrap an iterator with one which adds a continuation probe.
+     * The probe will be called in the {@link #hasNext()} method, before
+     * the source iterator is itself checked and in {@link #next()}
+     * before retrieval.
+     * That is: it may be called multiple times per iteration.
+     * @param source source iterator.
+     * @param continueWork predicate which will trigger a fast halt if it returns false.
+     */
+    private HaltableRemoteIterator(
+        final RemoteIterator<S> source,
+        final CallableRaisingIOE<Boolean> continueWork) {
+      super(source);
+      this.continueWork = continueWork;
+    }
+
+    @Override
+    public boolean hasNext() throws IOException {
+      return sourceHasNext();
+    }
+
+    @Override
+    public S next() throws IOException {
+      return sourceNext();
+    }
+
+    @Override
+    protected boolean sourceHasNext() throws IOException {
+      return continueWork.apply() && super.sourceHasNext();
+    }
+  }
+
+  /**
+   * A remote iterator which simply counts up, stopping once the
+   * value is greater than the finish.
+   * This is primarily for tests or when submitting work into a TaskPool.
+   */
+  private static final class RangeExcludingLongIterator implements RemoteIterator<Long> {
+
+    /**
+     * Current value.
+     */
+    private long current;
+
+    /**
+     * End value.
+     */
+    private final long excludedFinish;
+
+    /**
+     * Construct.
+     * @param start start value.
+     * @param excludedFinish halt the iterator once the current value is equal
+     *          to or greater than this.
+     */
+    private RangeExcludingLongIterator(final long start, final long excludedFinish) {
+      this.current = start;
+      this.excludedFinish = excludedFinish;
+    }
+
+    @Override
+    public boolean hasNext() throws IOException {
+      return current < excludedFinish;
+    }
+
+    @Override
+    public Long next() throws IOException {
+      if (!hasNext()) {
+        throw new NoSuchElementException();
+      }
+      final long s = current;
+      current++;
+      return s;
+    }
+  }
+
 }

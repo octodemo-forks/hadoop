@@ -33,7 +33,6 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
-import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.audit.CommonAuditContext;
@@ -362,29 +361,28 @@ public class ServiceLauncher<S extends Service>
   /**
    * Override point: create an options instance to combine with the 
    * standard options set.
-   * <i>Important. Synchronize uses of {@link OptionBuilder}</i>
-   * with {@code OptionBuilder.class}
+   * <i>Important. Synchronize uses of {@link Option}</i>
+   * with {@code Option.class}
    * @return the new options
    */
   @SuppressWarnings("static-access")
   protected Options createOptions() {
-    synchronized (OptionBuilder.class) {
+    synchronized (Option.class) {
       Options options = new Options();
-      Option oconf = OptionBuilder.withArgName("configuration file")
+      Option oconf = Option.builder(ARG_CONF_SHORT).argName("configuration file")
           .hasArg()
-          .withDescription("specify an application configuration file")
-          .withLongOpt(ARG_CONF)
-          .create(ARG_CONF_SHORT);
-      Option confclass = OptionBuilder.withArgName("configuration classname")
+          .desc("specify an application configuration file")
+          .longOpt(ARG_CONF)
+          .build();
+      Option confclass = Option.builder(ARG_CONFCLASS_SHORT).argName("configuration classname")
           .hasArg()
-          .withDescription(
-              "Classname of a Hadoop Configuration subclass to load")
-          .withLongOpt(ARG_CONFCLASS)
-          .create(ARG_CONFCLASS_SHORT);
-      Option property = OptionBuilder.withArgName("property=value")
+          .desc("Classname of a Hadoop Configuration subclass to load")
+          .longOpt(ARG_CONFCLASS)
+          .build();
+      Option property = Option.builder("D").argName("property=value")
           .hasArg()
-          .withDescription("use value for given property")
-          .create('D');
+          .desc("use value for given property")
+          .build();
       options.addOption(oconf);
       options.addOption(property);
       options.addOption(confclass);
@@ -413,7 +411,7 @@ public class ServiceLauncher<S extends Service>
   }
 
   /**
-   * This creates all the configurations defined by
+   * @return This creates all the configurations defined by
    * {@link #getConfigurationsToCreate()} , ensuring that
    * the resources have been pushed in.
    * If one cannot be loaded it is logged and the operation continues
@@ -567,6 +565,7 @@ public class ServiceLauncher<S extends Service>
    * @throws Exception any other failure -if it implements
    * {@link ExitCodeProvider} then it defines the exit code for any
    * containing exception
+   * @return status code.
    */
 
   protected int coreServiceLaunch(Configuration conf,
@@ -648,7 +647,7 @@ public class ServiceLauncher<S extends Service>
   }
 
   /**
-   * Instantiate the service defined in {@code serviceClassName}.
+   * @return Instantiate the service defined in {@code serviceClassName}.
    *
    * Sets the {@code configuration} field
    * to the the value of {@code conf},
@@ -852,6 +851,7 @@ public class ServiceLauncher<S extends Service>
    * The service launcher code assumes that after this method is invoked,
    * no other code in the same method is called.
    * @param exitCode code to exit
+   * @param message input message.
    */
   protected void exit(int exitCode, String message) {
     ExitUtil.terminate(exitCode, message);
@@ -1003,7 +1003,7 @@ public class ServiceLauncher<S extends Service>
   }
 
   /**
-   * Build a log message for starting up and shutting down. 
+   * @return Build a log message for starting up and shutting down.
    * @param classname the class of the server
    * @param args arguments
    */

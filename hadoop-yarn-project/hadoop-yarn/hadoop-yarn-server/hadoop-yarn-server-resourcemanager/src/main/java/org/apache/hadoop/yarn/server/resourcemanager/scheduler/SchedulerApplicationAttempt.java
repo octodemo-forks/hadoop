@@ -656,7 +656,7 @@ public class SchedulerApplicationAttempt implements SchedulableEntity {
   @SuppressWarnings("unchecked")
   public void containerLaunchedOnNode(ContainerId containerId,
       NodeId nodeId) {
-    writeLock.lock();
+    readLock.lock();
     try {
       // Inform the container
       RMContainer rmContainer = getRMContainer(containerId);
@@ -670,7 +670,7 @@ public class SchedulerApplicationAttempt implements SchedulableEntity {
       rmContainer.handle(
           new RMContainerEvent(containerId, RMContainerEventType.LAUNCHED));
     } finally {
-      writeLock.unlock();
+      readLock.unlock();
     }
   }
   
@@ -801,6 +801,7 @@ public class SchedulerApplicationAttempt implements SchedulableEntity {
    * Called when AM heartbeats. These containers were recovered by the RM after
    * the AM had registered. They are reported to the AM in the
    * <code>AllocateResponse#containersFromPreviousAttempts</code>.
+   * @return Container List.
    */
   public List<Container> pullPreviousAttemptContainers() {
     writeLock.lock();

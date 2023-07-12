@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractParentQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CSQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.AbstractLeafQueue;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.ParentQueue;
@@ -57,7 +58,7 @@ public class TempQueuePerPartition extends AbstractPreemptionEntity {
   final ArrayList<TempQueuePerPartition> children;
   private Collection<TempAppPerPartition> apps;
   AbstractLeafQueue leafQueue;
-  ParentQueue parentQueue;
+  AbstractParentQueue parentQueue;
   boolean preemptionDisabled;
 
   protected Resource pendingDeductReserved;
@@ -199,6 +200,10 @@ public class TempQueuePerPartition extends AbstractPreemptionEntity {
     Resource remain = Resources.subtract(avail, accepted);
     Resources.addTo(idealAssigned, accepted);
     return remain;
+  }
+
+  public float getAbsCapacity() {
+    return absCapacity;
   }
 
   public Resource getGuaranteed() {

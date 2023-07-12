@@ -399,6 +399,12 @@ public class CommonConfigurationKeys extends CommonConfigurationKeysPublic {
   public static final String ZK_ACL_DEFAULT = "world:anyone:rwcda";
   /** Authentication for the ZooKeeper ensemble. */
   public static final String ZK_AUTH = ZK_PREFIX + "auth";
+  /** Principal name for zookeeper servers. */
+  public static final String ZK_SERVER_PRINCIPAL = ZK_PREFIX + "server.principal";
+  /** Kerberos principal name for zookeeper connection. */
+  public static final String ZK_KERBEROS_PRINCIPAL = ZK_PREFIX + "kerberos.principal";
+  /** Kerberos keytab for zookeeper connection. */
+  public static final String ZK_KERBEROS_KEYTAB = ZK_PREFIX + "kerberos.keytab";
 
   /** Address of the ZooKeeper ensemble. */
   public static final String ZK_ADDRESS = ZK_PREFIX + "address";
@@ -411,6 +417,14 @@ public class CommonConfigurationKeys extends CommonConfigurationKeysPublic {
   /** How often to retry a ZooKeeper operation  in milliseconds. */
   public static final String ZK_RETRY_INTERVAL_MS =
       ZK_PREFIX + "retry-interval-ms";
+  /** Keystore location for ZooKeeper client connection over SSL. */
+  public static final String ZK_SSL_KEYSTORE_LOCATION = ZK_PREFIX + "ssl.keystore.location";
+  /** Keystore password for ZooKeeper client connection over SSL. */
+  public static final String ZK_SSL_KEYSTORE_PASSWORD = ZK_PREFIX + "ssl.keystore.password";
+  /** Truststore location for ZooKeeper client connection over SSL. */
+  public static final String ZK_SSL_TRUSTSTORE_LOCATION = ZK_PREFIX + "ssl.truststore.location";
+  /** Truststore password for ZooKeeper client connection over SSL.  */
+  public static final String ZK_SSL_TRUSTSTORE_PASSWORD = ZK_PREFIX + "ssl.truststore.password";
   public static final int    ZK_RETRY_INTERVAL_MS_DEFAULT = 1000;
   /** Default domain name resolver for hadoop to use. */
   public static final String HADOOP_DOMAINNAME_RESOLVER_IMPL =
@@ -469,4 +483,21 @@ public class CommonConfigurationKeys extends CommonConfigurationKeysPublic {
    * default hadoop temp dir on local system: {@value}.
    */
   public static final String HADOOP_TMP_DIR = "hadoop.tmp.dir";
+
+  /**
+   * Thread-level IOStats Support.
+   * {@value}
+   */
+  public static final String IOSTATISTICS_THREAD_LEVEL_ENABLED =
+      "fs.iostatistics.thread.level.enabled";
+
+  /**
+   * Default value for Thread-level IOStats Support is true.
+   */
+  public static final boolean IOSTATISTICS_THREAD_LEVEL_ENABLED_DEFAULT =
+      true;
+
+  public static final String HADOOP_SECURITY_RESOLVER_IMPL =
+      "hadoop.security.resolver.impl";
+
 }

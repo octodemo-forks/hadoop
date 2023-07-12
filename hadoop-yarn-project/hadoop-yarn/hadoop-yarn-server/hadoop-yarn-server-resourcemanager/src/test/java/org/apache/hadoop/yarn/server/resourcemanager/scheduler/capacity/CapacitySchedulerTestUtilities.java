@@ -49,6 +49,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.AppAttemptA
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeAddedSchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateSchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.SchedulerEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.security.AppPriorityACLsManager;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
 import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.junit.Assert;
@@ -56,6 +57,7 @@ import org.junit.Assert;
 import java.io.IOException;
 import java.util.Set;
 
+import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerQueueHelpers.setupQueueConfAmbiguousQueue;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerQueueHelpers.setupQueueConfiguration;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -64,6 +66,13 @@ public final class CapacitySchedulerTestUtilities {
   public static final int GB = 1024;
 
   private CapacitySchedulerTestUtilities() {
+  }
+
+  public static void setQueueHandler(CapacitySchedulerContext cs) {
+    CapacitySchedulerQueueManager queueManager = new CapacitySchedulerQueueManager(
+        cs.getConfiguration(), cs.getRMContext().getNodeLabelManager(),
+        new AppPriorityACLsManager(cs.getConfiguration()));
+    when(cs.getCapacitySchedulerQueueManager()).thenReturn(queueManager);
   }
 
   @SuppressWarnings("unchecked")
@@ -172,6 +181,16 @@ public final class CapacitySchedulerTestUtilities {
         new AppAttemptAddedSchedulerEvent(appAttemptId1, false);
     cs.handle(addAttemptEvent1);
     return appAttemptId1;
+  }
+
+  public static MockRM setUpMoveAmbiguousQueue() {
+    CapacitySchedulerConfiguration conf = new CapacitySchedulerConfiguration();
+    setupQueueConfAmbiguousQueue(conf);
+    conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+        ResourceScheduler.class);
+    MockRM rm = new MockRM(conf);
+    rm.start();
+    return rm;
   }
 
   public static MockRM setUpMove() {
